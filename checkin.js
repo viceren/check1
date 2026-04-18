@@ -95,9 +95,12 @@ async function autoCheckin() {
     // 等待页面元素加载
     await page.waitForSelector('body', { timeout: 10000 });
     
-    // 检查是否已经登录（页面是否有"签到续期"按钮）
+    // 检查登录状态...检查登录状态
+    // 条件1：有"签到续期"按钮
+    // 条件2：没有密码输入框（说明已经登录）
     logger.info('检查登录状态...');
-    const isLoggedIn = await page.evaluate(() => {
+    
+    const checkinButtonExists = await page.evaluate(() => {
       const buttons = document.querySelectorAll('button');
       for (const btn of buttons) {
         if (btn.textContent && btn.textContent.includes('签到续期')) {
@@ -107,10 +110,19 @@ async function autoCheckin() {
       return false;
     });
     
+    const passwordInputExists = await page.evaluate(() => {
+      return document.querySelectorAll('input[type="password"]').length > 0;
+    });
+    
+    // 真正的登录状态：有签到按钮 且 没有密码输入框
+    const isLoggedIn = checkinButtonExists && !passwordInputExists;
+    
+    logger.info(`检测状态: 签到按钮=${checkinButtonExists}, 密码输入框=${passwordInputExists}, 已登录=${isLoggedIn}`);
+    
     if (isLoggedIn) {
-      logger.info('检测到已登录状态，直接进行签到');
+      logger.info('✅ 检测到已登录状态，直接进行签到');
     } else {
-      logger.info('未登录，需要先登录');
+      logger.info('🔐 未登录，需要先登录');
       
       // 在右侧"登录签到续期"区域输入密钥
       // 先找到包含"登录签到续期"文本的区域
