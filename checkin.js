@@ -148,60 +148,98 @@ async function autoCheckin() {
     // 查找并点击签到按钮
     logger.info('正在查找签到按钮');
     
-    const checkinButtonSelectors = [
-      '#checkin',
-      '.checkin-btn',
-      '[type="submit"]',
-      'button',
-      '.btn-primary'
-    ];
+    // 优先查找包含"签到续期"或"签到"文字的按钮
+    let checkinButton = null;
     
-    let checkinButtonFound = false;
-    
-    for (const selector of checkinButtonSelectors) {
+    // 方法1: 通过文字内容查找按钮
+    const buttons = await page.$$('button');
+    for (const btn of buttons) {
       try {
-        if (await page.$(selector)) {
-          logger.info(`找到签到按钮: ${selector}`);
-          await page.click(selector);
-          checkinButtonFound = true;
+        const text = await page.evaluate(el => el.textContent || el.innerText, btn);
+        if (text && (text.includes('签到续期') || text.includes('签到'))) {
+          checkinButton = btn;
+          logger.info(`找到签到按钮(文字匹配): ${text.trim()}`);
           break;
         }
       } catch (err) {
-        logger.debug(`选择器 ${selector} 无法找到或点击: ${err.message}`);
+        logger.debug(`获取按钮文字失败: ${err.message}`);
       }
     }
     
-    if (!checkinButtonFound) {
-      // 尝试查找所有按钮并点击第一个可见的
-      const buttons = await page.$$('button');
-      for (let i = 0; i < buttons.length; i++) {
+    // 方法2: 如果没有找到，尝试使用选择器
+    if (!checkinButton) {
+      const checkinButtonSelectors = [
+        '#checkin',
+        '.checkin-btn',
+        '[type="submit"]',
+        '.btn-primary'
+      ];
+      
+      for (const selector of checkinButtonSelectors) {
         try {
-          const isVisible = await page.evaluate(b => {
-            const style = window.getComputedStyle(b);
-            return style && style.display !== 'none' && 
-                   style.visibility !== 'hidden' && 
-                   style.opacity !== '0';
-          }, buttons[i]);
-          
-          if (isVisible) {
-            await buttons[i].click();
-            checkinButtonFound = true;
-            logger.info(`点击第 ${i+1} 个按钮作为签到按钮`);
+          const btn = await page.$(selector);
+          if (btn) {
+            checkinButton = btn;
+            logger.info(`找到签到按钮(选择器): ${selector}`);
             break;
           }
         } catch (err) {
-          logger.debug(`尝试点击第 ${i+1} 个按钮失败: ${err.message}`);
+          logger.debug(`选择器 ${selector} 无法找到: ${err.message}`);
         }
       }
     }
     
-    if (!checkinButtonFound) {
-      throw new Error('无法找到或点击签到按钮');
+    if (!checkinButton) {
+      throw new Error('无法找到签到按钮');
     }
     
-    // 等待签到结果
-    logger.info('等待签到结果...');
-    await page.waitForTimeout(3000);
+    // 点击按钮
+    await checkinButton.click();
+    logger.info('已点击签到按钮');
+    
+    // 等待更长时间，让页面处理签到请求
+    logger.info('等待签到结果(最长30秒)...');
+    
+    // 等待页面变化 - 检查按钮文字是否改变或出现成功提示
+    let checkinCompleted = false;
+    for (let i = 0; i < 30; i++) {
+      await page.waitForTimeout(1000);
+      
+      // 检查是否出现成功提示
+      const pageContent = await page.content();
+      if (pageContent.includes('签到成功') || 
+          pageContent.includes('今日已签到') ||
+          pageContent.includes('已签到')) {
+        logger.info('检测到签到成功提示');
+        checkinCompleted = true;
+        break;
+      }
+      
+      // 检查按钮文字是否变成"已签到"或类似
+      const currentButtons = await page.$$('button');
+      for (const btn of currentButtons) {
+        try {
+          const text = await page.evaluate(el => el.textContent || el.innerText, btn);
+          if (text && (text.includes('已签到') || text.includes('今日已签'))) {
+            logger.info(`按钮文字已变为: ${text.trim()}`);
+            checkinCompleted = true;
+            break;
+          }
+        } catch (err) {
+          // 忽略错误
+        }
+      }
+      
+      if (checkinCompleted) break;
+      logger.debug(`等待中... ${i + 1}/30 秒`);
+    }
+    
+    if (!checkinCompleted) {
+      logger.warn('等待30秒后仍未检测到明确的签到成功标志');
+    }
+    
+    // 额外等待2秒确保页面完全更新
+    await page.waitForTimeout(2000);
     
     // 获取页面内容以分析签到结果
     const pageContent = await page.content();
