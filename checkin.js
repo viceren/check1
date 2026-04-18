@@ -56,9 +56,12 @@ async function autoCheckin() {
     await page.screenshot({ path: '1_initial.png', fullPage: true });
     console.log('📸 已保存初始状态截图: 1_initial.png');
     
-    // 检查是否已经登录（是否有"签到续期"按钮或"今日已签到"按钮）
-    const hasCheckinButton = await page.locator('button:has-text("签到续期")').count() > 0;
+    // 检查是否已经登录（是否有"签到"或"签到续期"按钮或"今日已签到"按钮）
+    const hasCheckinButton1 = await page.locator('button:has-text("签到续期")').count() > 0;
+    const hasCheckinButton2 = await page.locator('button:has-text("签到")').count() > 0;
     const hasSignedButton = await page.locator('button:has-text("今日已签到")').count() > 0;
+    
+    const hasCheckinButton = hasCheckinButton1 || hasCheckinButton2;
     
     if (hasCheckinButton) {
       console.log('✅ 检测到已登录状态');
@@ -174,19 +177,26 @@ async function autoCheckin() {
       // 等待登录完成
       await page.waitForTimeout(3000);
       
-      // 检查是否有"签到续期"按钮（即使隐藏也能找到）
+      // 检查是否有"签到"或"签到续期"按钮（即使隐藏也能找到）
       const checkinButton = page.locator('button#checkinBtn.ci-btn.renew');
       const buttonCount = await checkinButton.count();
       if (buttonCount > 0) {
-        console.log('✅ 登录成功，检测到"签到续期"按钮');
+        console.log('✅ 登录成功，检测到签到按钮');
       } else {
-        // 尝试其他选择器
-        const altCheckinButton = page.locator('button:has-text("签到续期")');
-        const altCount = await altCheckinButton.count();
-        if (altCount > 0) {
-          console.log('✅ 登录成功，检测到"签到续期"按钮（备用选择器）');
+        // 尝试"签到续期"按钮
+        const renewCheckinButton = page.locator('button:has-text("签到续期")');
+        const renewCount = await renewCheckinButton.count();
+        if (renewCount > 0) {
+          console.log('✅ 登录成功，检测到"签到续期"按钮');
         } else {
-          throw new Error('登录后未找到"签到续期"按钮');
+          // 尝试"签到"按钮
+          const checkinButtonAlt = page.locator('button:has-text("签到")');
+          const checkinCount = await checkinButtonAlt.count();
+          if (checkinCount > 0) {
+            console.log('✅ 登录成功，检测到"签到"按钮');
+          } else {
+            throw new Error('登录后未找到签到按钮');
+          }
         }
       }
     }
@@ -194,24 +204,32 @@ async function autoCheckin() {
     // 截图记录登录后状态
     await page.screenshot({ path: '3_logged_in.png', fullPage: true });
     
-    // 点击"签到续期"按钮 - 优先使用精确选择器
-    console.log('🖱️ 寻找并点击签到续期按钮...');
+    // 点击"签到"或"签到续期"按钮 - 优先使用精确选择器
+    console.log('🖱️ 寻找并点击签到按钮...');
     
     // 尝试精确选择器
     const exactCheckinButton = page.locator('button#checkinBtn.ci-btn.renew');
     if (await exactCheckinButton.count() > 0) {
-      console.log('✅ 找到精确的签到续期按钮');
+      console.log('✅ 找到精确的签到按钮');
       await exactCheckinButton.click({ force: true });
-      console.log('🖱️ 点击签到续期按钮');
+      console.log('🖱️ 点击签到按钮');
     } else {
-      // 尝试其他选择器
-      const altCheckinButton = page.locator('button:has-text("签到续期")');
-      if (await altCheckinButton.count() > 0) {
-        console.log('✅ 找到签到续期按钮（备用选择器）');
-        await altCheckinButton.click({ force: true });
+      // 尝试"签到续期"按钮
+      const renewCheckinButton = page.locator('button:has-text("签到续期")');
+      if (await renewCheckinButton.count() > 0) {
+        console.log('✅ 找到签到续期按钮');
+        await renewCheckinButton.click({ force: true });
         console.log('🖱️ 点击签到续期按钮');
       } else {
-        throw new Error('未找到签到续期按钮');
+        // 尝试"签到"按钮
+        const checkinButton = page.locator('button:has-text("签到")');
+        if (await checkinButton.count() > 0) {
+          console.log('✅ 找到签到按钮');
+          await checkinButton.click({ force: true });
+          console.log('🖱️ 点击签到按钮');
+        } else {
+          throw new Error('未找到签到按钮');
+        }
       }
     }
     
