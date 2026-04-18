@@ -654,3 +654,4 @@ async function retry(fn, maxRetries = 3, delay = 1000) {
     logger.error(`签到失败: ${error.message}`);
     process.exit(1);
   }
+})();
