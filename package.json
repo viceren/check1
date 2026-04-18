@@ -8,9 +8,7 @@
   },
   "dependencies": {
     "dotenv": "^16.0.3",
-    "playwright": "^1.59.1",
-    "puppeteer": "^20.0.0",
-    "winston": "^3.8.2"
+    "playwright": "^1.59.1"
   },
   "author": "",
   "license": "MIT"
