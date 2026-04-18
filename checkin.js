@@ -45,7 +45,7 @@ async function autoCheckin() {
     
     // 访问签到页面
     console.log(`🌐 正在访问签到页面: ${CHECKIN_URL}`);
-    await page.goto(CHECKIN_URL, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto(CHECKIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     
     console.log('✅ 页面加载完成');
     
@@ -56,11 +56,15 @@ async function autoCheckin() {
     await page.screenshot({ path: '1_initial.png', fullPage: true });
     console.log('📸 已保存初始状态截图: 1_initial.png');
     
-    // 检查是否已经登录（是否有"签到续期"按钮）
+    // 检查是否已经登录（是否有"签到续期"按钮或"今日已签到"按钮）
     const hasCheckinButton = await page.locator('button:has-text("签到续期")').count() > 0;
+    const hasSignedButton = await page.locator('button:has-text("今日已签到")').count() > 0;
     
     if (hasCheckinButton) {
       console.log('✅ 检测到已登录状态');
+    } else if (hasSignedButton) {
+      console.log('🎉 检测到今日已签到状态');
+      return true;
     } else {
       console.log('🔐 未登录，需要先登录');
       
