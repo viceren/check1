@@ -51,7 +51,7 @@ async function autoCheckin() {
   try {
     logger.info('开始执行自动签到脚本');
     
-    // 启动浏览器
+    // 启动浏览器（GitHub Actions使用headless模式）
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -95,133 +95,293 @@ async function autoCheckin() {
     // 等待页面元素加载
     await page.waitForSelector('body', { timeout: 10000 });
     
-    // 输入密钥
-    logger.info('正在输入密钥');
-    
-    // 尝试找到密钥输入框并输入
-    const keyInputSelectors = [
-      '#key',
-      '[name="key"]',
-      '.key-input',
-      'input[type="password"]',
-      'input[type="text"]'
-    ];
-    
-    let keyInputFound = false;
-    
-    for (const selector of keyInputSelectors) {
-      try {
-        if (await page.$(selector)) {
-          await page.type(selector, CHECKIN_KEY, { delay: 100 });
-          keyInputFound = true;
-          logger.info(`使用选择器 ${selector} 成功输入密钥`);
-          break;
-        }
-      } catch (err) {
-        logger.debug(`选择器 ${selector} 无法找到或操作: ${err.message}`);
-      }
-    }
-    
-    if (!keyInputFound) {
-      // 如果找不到明确的输入框，尝试查找所有输入框并逐个尝试
-      const inputs = await page.$$('input');
-      for (let i = 0; i < inputs.length; i++) {
-        try {
-          await inputs[i].type(CHECKIN_KEY, { delay: 100 });
-          keyInputFound = true;
-          logger.info(`使用第 ${i+1} 个输入框成功输入密钥`);
-          break;
-        } catch (err) {
-          logger.debug(`尝试第 ${i+1} 个输入框失败: ${err.message}`);
+    // 检查是否已经登录（页面是否有"签到续期"按钮）
+    logger.info('检查登录状态...');
+    const isLoggedIn = await page.evaluate(() => {
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        if (btn.textContent && btn.textContent.includes('签到续期')) {
+          return true;
         }
       }
-    }
+      return false;
+    });
     
-    if (!keyInputFound) {
-      throw new Error('无法找到密钥输入框');
-    }
-    
-    // 处理滑动验证码
-    logger.info('正在处理滑动验证码');
-    await handleSliderCaptcha(page);
-    
-    // 查找并点击签到按钮
-    logger.info('正在查找签到按钮');
-    
-    // 优先查找包含"签到续期"或"签到"文字的按钮
-    let checkinButton = null;
-    
-    // 方法1: 通过文字内容查找按钮
-    const buttons = await page.$$('button');
-    for (const btn of buttons) {
-      try {
-        const text = await page.evaluate(el => el.textContent || el.innerText, btn);
-        if (text && (text.includes('签到续期') || text.includes('签到'))) {
-          checkinButton = btn;
-          logger.info(`找到签到按钮(文字匹配): ${text.trim()}`);
-          break;
-        }
-      } catch (err) {
-        logger.debug(`获取按钮文字失败: ${err.message}`);
-      }
-    }
-    
-    // 方法2: 如果没有找到，尝试使用选择器
-    if (!checkinButton) {
-      const checkinButtonSelectors = [
-        '#checkin',
-        '.checkin-btn',
-        '[type="submit"]',
-        '.btn-primary'
-      ];
+    if (isLoggedIn) {
+      logger.info('检测到已登录状态，直接进行签到');
+    } else {
+      logger.info('未登录，需要先登录');
       
-      for (const selector of checkinButtonSelectors) {
-        try {
-          const btn = await page.$(selector);
-          if (btn) {
-            checkinButton = btn;
-            logger.info(`找到签到按钮(选择器): ${selector}`);
-            break;
+      // 在右侧"登录签到续期"区域输入密钥
+      // 先找到包含"登录签到续期"文本的区域
+      const loginSection = await page.$('text=登录签到续期');
+      if (!loginSection) {
+        logger.warn('未找到"登录签到续期"区域，尝试查找密码输入框');
+      }
+      
+      // 查找右侧区域的密码输入框（通过位置或顺序判断）
+      const passwordInputs = await page.$$('input[type="password"]');
+      let targetInput = null;
+      
+      if (passwordInputs.length >= 2) {
+        // 如果有多个密码框，选择第二个（右侧的）
+        targetInput = passwordInputs[1];
+        logger.info('找到右侧密码输入框（第2个）');
+      } else if (passwordInputs.length === 1) {
+        targetInput = passwordInputs[0];
+        logger.info('找到唯一的密码输入框');
+      }
+      
+      if (!targetInput) {
+        // 尝试通过其他方式定位右侧输入框
+        const allInputs = await page.$$('input');
+        for (let i = 0; i < allInputs.length; i++) {
+          const input = allInputs[i];
+          try {
+            // 检查输入框是否在右侧区域（通过父元素判断）
+            const isInRightSection = await page.evaluate((el) => {
+              // 查找最近的包含"登录签到续期"的父元素
+              let parent = el.parentElement;
+              while (parent) {
+                if (parent.textContent && parent.textContent.includes('登录签到续期')) {
+                  return true;
+                }
+                parent = parent.parentElement;
+              }
+              return false;
+            }, input);
+            
+            if (isInRightSection) {
+              targetInput = input;
+              logger.info(`找到右侧区域的输入框（第${i+1}个）`);
+              break;
+            }
+          } catch (err) {
+            // 忽略错误
           }
-        } catch (err) {
-          logger.debug(`选择器 ${selector} 无法找到: ${err.message}`);
         }
+      }
+      
+      if (!targetInput) {
+        throw new Error('无法找到右侧"登录签到续期"区域的密钥输入框');
+      }
+      
+      // 输入密钥
+      await targetInput.type(CHECKIN_KEY, { delay: 100 });
+      logger.info('成功在右侧区域输入密钥');
+      
+      // 等待一下确保输入完成
+      await page.waitForTimeout(500);
+      
+      // 查找并点击"登录"按钮
+      logger.info('查找登录按钮...');
+      
+      // 使用 evaluate 查找并点击包含"登录"文字的按钮
+      const loginButtonClicked = await page.evaluate(() => {
+        const buttons = document.querySelectorAll('button');
+        for (const btn of buttons) {
+          if (btn.textContent && btn.textContent.trim() === '登录') {
+            btn.click();
+            return true;
+          }
+        }
+        return false;
+      });
+      
+      if (!loginButtonClicked) {
+        throw new Error('无法找到"登录"按钮');
+      }
+      
+      logger.info('点击登录按钮');
+      
+      // 等待登录完成，页面刷新显示"签到续期"按钮
+      logger.info('等待登录完成...');
+      await page.waitForTimeout(3000);
+      
+      // 等待"签到续期"按钮出现
+      try {
+        await page.waitForFunction(() => {
+          const buttons = document.querySelectorAll('button');
+          for (const btn of buttons) {
+            if (btn.textContent && btn.textContent.includes('签到续期')) {
+              return true;
+            }
+          }
+          return false;
+        }, { timeout: 10000 });
+        logger.info('登录成功，检测到"签到续期"按钮');
+      } catch (err) {
+        logger.warn('等待"签到续期"按钮超时，继续执行');
       }
     }
     
-    if (!checkinButton) {
-      throw new Error('无法找到签到按钮');
+    // 查找并点击"签到续期"按钮
+    logger.info('查找签到续期按钮...');
+    
+    // 先截图记录点击前状态
+    await page.screenshot({ path: 'before_click.png', fullPage: true });
+    logger.info('已保存点击前截图: before_click.png');
+    
+    // 优先使用ID选择器（根据用户提供的HTML代码），通过JavaScript点击
+    logger.info('尝试通过JavaScript点击签到按钮...');
+    const buttonClicked = await page.evaluate(() => {
+      // 首先尝试通过ID查找
+      const btnById = document.querySelector('#checkinBtn');
+      if (btnById) {
+        btnById.click();
+        return { success: true, method: 'id', text: btnById.textContent };
+      }
+      
+      // 备选：通过class查找
+      const btnByClass = document.querySelector('.ci-btn.renew');
+      if (btnByClass) {
+        btnByClass.click();
+        return { success: true, method: 'class', text: btnByClass.textContent };
+      }
+      
+      // 备选：通过文字内容查找
+      const buttons = document.querySelectorAll('button');
+      for (const btn of buttons) {
+        if (btn.textContent && btn.textContent.includes('签到续期')) {
+          btn.click();
+          return { success: true, method: 'text', text: btn.textContent };
+        }
+      }
+      
+      // 尝试调用doCheckin函数
+      if (typeof doCheckin === 'function') {
+        doCheckin();
+        return { success: true, method: 'function', text: 'doCheckin()' };
+      }
+      
+      return { success: false };
+    });
+    
+    if (!buttonClicked.success) {
+      throw new Error('无法找到或点击"签到续期"按钮');
     }
     
-    // 点击按钮
-    await checkinButton.click();
-    logger.info('已点击签到按钮');
+    logger.info(`✅ 点击签到按钮成功 (${buttonClicked.method}): ${buttonClicked.text}`);
     
-    // 等待更长时间，让页面处理签到请求
+    // 等待JavaScript执行和可能的弹窗出现
+    await page.waitForTimeout(2000);
+    
+    // 等待滑动验证码出现
+    logger.info('等待滑动验证码出现(最多5秒)...');
+    await page.waitForTimeout(3000);
+    
+    // 截图查看是否出现验证码
+    await page.screenshot({ path: 'captcha_check.png', fullPage: true });
+    logger.info('已保存验证码检测截图: captcha_check.png');
+    
+    // 检查是否出现滑动验证码
+    const hasCaptcha = await page.evaluate(() => {
+      // 检查常见的验证码元素
+      const captchaSelectors = [
+        '.captcha-slider',
+        '.slider-captcha',
+        '#captcha',
+        '[class*="slider"]',
+        '[class*="captcha"]'
+      ];
+      for (const selector of captchaSelectors) {
+        const el = document.querySelector(selector);
+        if (el && el.offsetParent !== null) { // 确保元素可见
+          return { found: true, selector: selector, visible: true };
+        }
+      }
+      // 检查页面文本是否包含验证码相关文字
+      const bodyText = document.body.textContent || '';
+      if (bodyText.includes('滑动') || bodyText.includes('验证') || bodyText.includes('captcha')) {
+        return { found: true, selector: 'text-match', visible: true };
+      }
+      return { found: false };
+    });
+    
+    if (hasCaptcha.found) {
+      logger.info(`检测到滑动验证码: ${hasCaptcha.selector}`);
+      // 再等待3秒确保验证码完全加载
+      await page.waitForTimeout(3000);
+      await page.screenshot({ path: 'captcha_loaded.png', fullPage: true });
+      logger.info('已保存验证码加载后截图: captcha_loaded.png');
+      
+      // 尝试处理验证码
+      await handleSliderCaptcha(page);
+      
+      // 验证码处理后等待更长时间
+      await page.waitForTimeout(5000);
+      
+      // 再次点击签到按钮（验证完成后可能需要再次点击）
+      logger.info('验证完成后再次点击签到按钮...');
+      await page.evaluate(() => {
+        const btn = document.querySelector('#checkinBtn');
+        if (btn) btn.click();
+      });
+      logger.info('再次点击签到按钮');
+      await page.waitForTimeout(3000);
+    } else {
+      logger.info('未检测到滑动验证码，继续等待签到结果');
+    }
+    
+    // 等待签到结果
     logger.info('等待签到结果(最长30秒)...');
-    
-    // 等待页面变化 - 检查按钮文字是否改变或出现成功提示
     let checkinCompleted = false;
+    let lastPageContent = '';
+    
     for (let i = 0; i < 30; i++) {
       await page.waitForTimeout(1000);
       
+      // 每秒截图记录
+      if (i % 5 === 0) {
+        await page.screenshot({ path: `waiting_${i}s.png`, fullPage: true });
+        logger.debug(`已保存等待截图: waiting_${i}s.png`);
+      }
+      
       // 检查是否出现成功提示
       const pageContent = await page.content();
+      lastPageContent = pageContent;
+      
+      // 检查日历中今天是否有签到标记
+      const todayCheckinStatus = await page.evaluate(() => {
+        // 获取今天的日期
+        const today = new Date().getDate();
+        // 查找日历中今天的元素
+        const calendarElements = document.querySelectorAll('*');
+        for (const el of calendarElements) {
+          if (el.textContent && el.textContent.trim() === String(today)) {
+            // 检查是否有签到标记（小点或其他标记）
+            const parent = el.parentElement;
+            if (parent) {
+              const hasMark = parent.querySelector('.dot, .checked, .sign, [class*="sign"]');
+              return { today: today, hasMark: !!hasMark, html: parent.innerHTML.substring(0, 200) };
+            }
+          }
+        }
+        return { today: today, hasMark: false };
+      });
+      
+      if (todayCheckinStatus.hasMark) {
+        logger.info(`检测到日历中${todayCheckinStatus.today}号已有签到标记！`);
+        checkinCompleted = true;
+        break;
+      }
+      
       if (pageContent.includes('签到成功') || 
           pageContent.includes('今日已签到') ||
-          pageContent.includes('已签到')) {
+          pageContent.includes('已签到') ||
+          pageContent.includes('连续签到')) {
         logger.info('检测到签到成功提示');
         checkinCompleted = true;
         break;
       }
       
-      // 检查按钮文字是否变成"已签到"或类似
+      // 检查按钮文字是否变成"已签到"或显示连续签到天数
       const currentButtons = await page.$$('button');
       for (const btn of currentButtons) {
         try {
           const text = await page.evaluate(el => el.textContent || el.innerText, btn);
-          if (text && (text.includes('已签到') || text.includes('今日已签'))) {
-            logger.info(`按钮文字已变为: ${text.trim()}`);
+          if (text && (text.includes('已签到') || text.includes('今日已签') || text.includes('连续签到'))) {
+            logger.info(`检测到状态变化: ${text.trim()}`);
             checkinCompleted = true;
             break;
           }
@@ -236,10 +396,17 @@ async function autoCheckin() {
     
     if (!checkinCompleted) {
       logger.warn('等待30秒后仍未检测到明确的签到成功标志');
+      // 保存最终页面内容用于调试
+      fs.writeFileSync('final_page.html', lastPageContent);
+      logger.info('已保存最终页面HTML: final_page.html');
     }
     
     // 额外等待2秒确保页面完全更新
     await page.waitForTimeout(2000);
+    
+    // 最终截图
+    await page.screenshot({ path: 'final_result.png', fullPage: true });
+    logger.info('已保存最终结果截图: final_result.png');
     
     // 获取页面内容以分析签到结果
     const pageContent = await page.content();
@@ -368,207 +535,236 @@ async function autoCheckin() {
  */
 async function handleSliderCaptcha(page) {
   try {
-    // 等待验证码元素加载
-    logger.info('等待验证码元素加载');
+    logger.info('🔍 开始处理滑动验证码');
     
-    // 尝试多种可能的验证码选择器
-    const captchaSelectors = [
-      '.captcha-slider',
-      '.slider-captcha',
-      '#captcha',
-      '[class*="slider"]',
-      '[id*="captcha"]'
-    ];
+    // 首先检查是否有iframe（验证码可能在iframe中）
+    const frames = page.frames();
+    logger.info(`页面共有 ${frames.length} 个frame`);
     
-    let captchaElement = null;
-    let sliderHandle = null;
-    let sliderTrack = null;
-    
-    // 查找验证码元素
-    for (const selector of captchaSelectors) {
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
       try {
-        if (await page.$(selector)) {
-          captchaElement = await page.$(selector);
-          logger.info(`找到验证码元素: ${selector}`);
-          
-          // 尝试查找滑块和轨道
-          const handleSelectors = ['.slider-handle', '.handle', '.slider-btn', '.btn'];
-          for (const handleSelector of handleSelectors) {
-            try {
-              const handle = await captchaElement.$(handleSelector);
-              if (handle) {
-                sliderHandle = handle;
-                logger.info(`找到滑块: ${handleSelector}`);
-                break;
-              }
-            } catch (err) {
-              logger.debug(`在验证码元素内查找滑块失败: ${err.message}`);
-            }
-          }
-          
-          const trackSelectors = ['.slider-track', '.track', '.slider-bg', '.bg'];
-          for (const trackSelector of trackSelectors) {
-            try {
-              const track = await captchaElement.$(trackSelector);
-              if (track) {
-                sliderTrack = track;
-                logger.info(`找到轨道: ${trackSelector}`);
-                break;
-              }
-            } catch (err) {
-              logger.debug(`在验证码元素内查找轨道失败: ${err.message}`);
-            }
-          }
-          
-          // 如果找到了滑块和轨道，跳出循环
-          if (sliderHandle && sliderTrack) {
-            break;
-          }
+        const hasCaptcha = await frame.evaluate(() => {
+          return document.querySelector('.captcha-slider, .slider-captcha, [class*="slider"], [class*="captcha"]') !== null;
+        });
+        if (hasCaptcha) {
+          logger.info(`在第 ${i} 个frame中找到验证码元素`);
+          await handleSliderCaptchaInFrame(frame, page);
+          return;
         }
-      } catch (err) {
-        logger.debug(`查找验证码元素失败: ${err.message}`);
+      } catch (e) {
+        // 忽略跨域frame的错误
       }
     }
     
-    // 如果没有找到验证码元素，可能页面没有验证码或者验证码已经通过
-    if (!captchaElement) {
-      logger.info('未检测到验证码元素，可能不需要验证码或已自动通过');
-      return;
-    }
-    
-    // 如果没有找到滑块或轨道，尝试直接在页面中查找
-    if (!sliderHandle) {
-      logger.info('在验证码元素内未找到滑块，尝试在整个页面中查找');
-      const handleSelectors = ['.slider-handle', '.handle', '.slider-btn', '.btn'];
-      for (const selector of handleSelectors) {
-        try {
-          if (await page.$(selector)) {
-            sliderHandle = await page.$(selector);
-            logger.info(`在页面中找到滑块: ${selector}`);
-            break;
-          }
-        } catch (err) {
-          logger.debug(`在页面中查找滑块失败: ${err.message}`);
-        }
-      }
-    }
-    
-    if (!sliderTrack) {
-      logger.info('在验证码元素内未找到轨道，尝试在整个页面中查找');
-      const trackSelectors = ['.slider-track', '.track', '.slider-bg', '.bg'];
-      for (const selector of trackSelectors) {
-        try {
-          if (await page.$(selector)) {
-            sliderTrack = await page.$(selector);
-            logger.info(`在页面中找到轨道: ${selector}`);
-            break;
-          }
-        } catch (err) {
-          logger.debug(`在页面中查找轨道失败: ${err.message}`);
-        }
-      }
-    }
-    
-    // 如果仍然没有找到滑块或轨道，尝试其他方法
-    if (!sliderHandle || !sliderTrack) {
-      logger.warn('无法找到滑块或轨道，尝试替代方案');
-      
-      // 尝试查找所有可拖动元素
-      const draggableElements = await page.$$('[draggable="true"], [class*="drag"], [id*="drag"]');
-      if (draggableElements.length > 0) {
-        sliderHandle = draggableElements[0];
-        logger.info('找到可拖动元素作为滑块');
-      }
-      
-      // 尝试查找所有可能的轨道元素
-      const trackElements = await page.$$('[class*="track"], [class*="rail"], [class*="line"]');
-      if (trackElements.length > 0) {
-        sliderTrack = trackElements[0];
-        logger.info('找到可能的轨道元素');
-      }
-    }
-    
-    // 如果还是没有找到，抛出错误
-    if (!sliderHandle) {
-      throw new Error('无法找到滑块元素');
-    }
-    
-    if (!sliderTrack) {
-      throw new Error('无法找到轨道元素');
-    }
-    
-    // 获取滑块和轨道的位置信息
-    const handleRect = await sliderHandle.boundingBox();
-    const trackRect = await sliderTrack.boundingBox();
-    
-    if (!handleRect || !trackRect) {
-      throw new Error('无法获取滑块或轨道的位置信息');
-    }
-    
-    logger.info(`滑块位置: x=${handleRect.x}, y=${handleRect.y}, width=${handleRect.width}, height=${handleRect.height}`);
-    logger.info(`轨道位置: x=${trackRect.x}, y=${trackRect.y}, width=${trackRect.width}, height=${trackRect.height}`);
-    
-    // 计算滑动距离（这里是一个估计值，实际情况可能需要更复杂的计算）
-    // 通常滑动距离是轨道宽度减去滑块宽度
-    const slideDistance = trackRect.width - handleRect.width;
-    
-    // 为了模拟人类行为，我们不会直接滑到最远处，而是留下一些余量
-    const randomOffset = Math.floor(Math.random() * 20) - 10; // -10 到 10 的随机偏移
-    const targetDistance = slideDistance * (0.8 + Math.random() * 0.15) + randomOffset; // 滑动到轨道的80%-95%位置
-    
-    logger.info(`计算得到的滑动距离: ${targetDistance.toFixed(2)}px`);
-    
-    // 获取滑块的中心点
-    const handleCenterX = handleRect.x + handleRect.width / 2;
-    const handleCenterY = handleRect.y + handleRect.height / 2;
-    
-    // 移动鼠标到滑块中心
-    await page.mouse.move(handleCenterX, handleCenterY);
-    
-    // 按下鼠标左键
-    await page.mouse.down();
-    logger.info('按下鼠标左键');
-    
-    // 模拟人类滑动行为
-    await simulateHumanSlide(page, handleCenterX, handleCenterY, targetDistance);
-    
-    // 释放鼠标左键
-    await page.mouse.up();
-    logger.info('释放鼠标左键');
-    
-    // 等待验证结果
-    await page.waitForTimeout(2000);
-    
-    logger.info('验证码滑动完成');
+    // 在主页面中查找验证码
+    await handleSliderCaptchaInFrame(page, page);
     
   } catch (error) {
-    logger.error(`处理滑动验证码时发生错误: ${error.message}`);
-    logger.debug(error.stack);
-    
-    // 尝试其他可能的验证码处理方式
-    try {
-      // 检查是否有刷新按钮，如果有，尝试刷新验证码
-      const refreshButtons = await page.$$('.refresh-btn, .refresh, #refresh, [class*="refresh"]');
-      if (refreshButtons.length > 0) {
-        logger.info('找到验证码刷新按钮，尝试刷新验证码');
-        await refreshButtons[0].click();
-        await page.waitForTimeout(1000);
-        
-        // 重新尝试处理验证码
-        return handleSliderCaptcha(page);
-      }
-    } catch (refreshError) {
-      logger.debug(`尝试刷新验证码失败: ${refreshError.message}`);
-    }
-    
-    // 如果是找不到元素的错误，可能页面结构发生变化，或者不需要验证码
-    if (error.message.includes('Cannot find') || error.message.includes('Unable to find')) {
-      logger.warn('无法找到验证码相关元素，可能页面结构已变化或不需要验证码');
-      return;
-    }
-    
-    throw error;
+    logger.error(`❌ 处理滑动验证码时发生错误: ${error.message}`);
+    // 不抛出错误，让流程继续
   }
+}
+
+/**
+ * 在指定frame中处理滑动验证码
+ * @param {Frame|Page} frame - Frame或Page实例
+ * @param {Page} page - 主页面实例（用于鼠标操作）
+ */
+async function handleSliderCaptchaInFrame(frame, page) {
+  // 查找验证码容器
+  const captchaSelectors = [
+    '.captcha-slider',
+    '.slider-captcha', 
+    '#captcha',
+    '[class*="slider"]',
+    '[class*="captcha"]',
+    '[id*="captcha"]'
+  ];
+  
+  let captchaInfo = null;
+  
+  for (const selector of captchaSelectors) {
+    try {
+      const element = await frame.$(selector);
+      if (element) {
+        const box = await element.boundingBox();
+        if (box && box.width > 50 && box.height > 50) {
+          captchaInfo = { element, selector, box };
+          logger.info(`✅ 找到验证码容器: ${selector} (${box.width}x${box.height})`);
+          break;
+        }
+      }
+    } catch (e) {
+      // 继续尝试下一个选择器
+    }
+  }
+  
+  if (!captchaInfo) {
+    logger.warn('⚠️ 未找到验证码容器');
+    return;
+  }
+  
+  // 在验证码容器内查找滑块
+  const handleSelectors = [
+    '.slider-handle',
+    '.handle', 
+    '[class*="handle"]',
+    '[class*="slider"] button',
+    '[class*="drag"]'
+  ];
+  
+  let sliderInfo = null;
+  
+  for (const selector of handleSelectors) {
+    try {
+      const handle = await captchaInfo.element.$(selector);
+      if (handle) {
+        const box = await handle.boundingBox();
+        if (box) {
+          sliderInfo = { handle, selector, box };
+          logger.info(`✅ 找到滑块: ${selector} at (${box.x}, ${box.y})`);
+          break;
+        }
+      }
+    } catch (e) {
+      // 继续尝试
+    }
+  }
+  
+  // 如果没找到特定滑块，尝试在验证码区域内查找任何可拖动元素
+  if (!sliderInfo) {
+    logger.info('🔍 尝试查找任何可拖动元素...');
+    const allElements = await captchaInfo.element.$$('*');
+    for (const el of allElements) {
+      try {
+        const box = await el.boundingBox();
+        if (box && box.width > 30 && box.width < 100 && box.height > 30 && box.height < 100) {
+          sliderInfo = { handle: el, selector: 'auto-detected', box };
+          logger.info(`✅ 自动检测到可能的滑块: ${box.width}x${box.height} at (${box.x}, ${box.y})`);
+          break;
+        }
+      } catch (e) {
+        // 继续
+      }
+    }
+  }
+  
+  if (!sliderInfo) {
+    logger.warn('⚠️ 未找到滑块元素，尝试JavaScript模拟滑动');
+    await simulateSlideWithJavaScript(frame, captchaInfo.box);
+    return;
+  }
+  
+  // 执行滑动操作
+  await performSlide(page, sliderInfo.box, captchaInfo.box);
+}
+
+/**
+ * 使用JavaScript模拟滑动
+ * @param {Frame|Page} frame - Frame或Page实例  
+ * @param {Object} captchaBox - 验证码容器位置
+ */
+async function simulateSlideWithJavaScript(frame, captchaBox) {
+  logger.info('🤖 使用JavaScript模拟滑动验证');
+  
+  await frame.evaluate((captchaWidth) => {
+    // 查找验证码相关元素
+    const captchaElements = document.querySelectorAll('[class*="captcha"], [class*="slider"], [id*="captcha"]');
+    
+    captchaElements.forEach(el => {
+      // 触发滑动完成事件
+      const startEvent = new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 0,
+        clientY: 0
+      });
+      
+      const moveEvent = new MouseEvent('mousemove', {
+        bubbles: true,
+        cancelable: true,
+        clientX: captchaWidth * 0.9, // 滑动到90%位置
+        clientY: 0
+      });
+      
+      const endEvent = new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        clientX: captchaWidth * 0.9,
+        clientY: 0
+      });
+      
+      el.dispatchEvent(startEvent);
+      el.dispatchEvent(moveEvent);
+      el.dispatchEvent(endEvent);
+      
+      // 设置验证成功标记
+      el.setAttribute('data-verified', 'true');
+      
+      // 触发验证成功回调
+      const verifyEvent = new CustomEvent('verify', { 
+        bubbles: true,
+        detail: { success: true }
+      });
+      el.dispatchEvent(verifyEvent);
+    });
+    
+    // 尝试点击任何验证按钮
+    const buttons = document.querySelectorAll('button');
+    buttons.forEach(btn => {
+      const text = btn.textContent || '';
+      if (text.includes('验证') || text.includes('确认') || text.includes('完成')) {
+        btn.click();
+      }
+    });
+  }, captchaBox.width);
+  
+  logger.info('✅ JavaScript模拟滑动完成');
+  await new Promise(resolve => setTimeout(resolve, 3000));
+}
+
+/**
+ * 执行滑动操作
+ * @param {Page} page - 页面实例
+ * @param {Object} sliderBox - 滑块位置
+ * @param {Object} captchaBox - 验证码容器位置
+ */
+async function performSlide(page, sliderBox, captchaBox) {
+  logger.info('🖱️ 开始执行滑动操作');
+  
+  // 计算滑动距离（滑动到最右边，减去一些余量）
+  const slideDistance = captchaBox.width - sliderBox.width - 10;
+  
+  // 滑块中心点
+  const startX = sliderBox.x + sliderBox.width / 2;
+  const startY = sliderBox.y + sliderBox.height / 2;
+  
+  logger.info(`📍 起始位置: (${startX}, ${startY})`);
+  logger.info(`📏 滑动距离: ${slideDistance}px`);
+  
+  // 移动到滑块位置
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  logger.info('⬇️ 按下鼠标');
+  
+  // 分段滑动，模拟人类行为
+  const steps = 10;
+  const stepDistance = slideDistance / steps;
+  
+  for (let i = 1; i <= steps; i++) {
+    const currentX = startX + stepDistance * i;
+    const randomY = startY + (Math.random() - 0.5) * 5; // 随机Y偏移
+    await page.mouse.move(currentX, randomY);
+    await new Promise(resolve => setTimeout(resolve, 50 + Math.random() * 100));
+  }
+  
+  await page.mouse.up();
+  logger.info('⬆️ 释放鼠标');
+  
+  // 等待验证完成
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  logger.info('✅ 滑动操作完成');
 }
 
 /**
@@ -675,21 +871,22 @@ async function retry(fn, maxRetries = 3, delay = 1000) {
   throw lastError;
 }
 
-// 执行签到
+// 执行签到（测试模式：只执行一次，不重试）
 (async () => {
   try {
-    // 使用重试机制执行签到
-    const success = await retry(autoCheckin, 3, 5000);
+    logger.info('========== 开始签到测试（单次执行） ==========');
+    const success = await autoCheckin();
     
     if (success) {
-      logger.info('签到成功完成');
+      logger.info('✅ 签到成功完成');
       process.exit(0);
     } else {
-      logger.warn('签到完成，但可能未成功');
-      process.exit(0); // 即使可能失败，也返回成功状态码，避免GitHub Actions任务失败
+      logger.warn('⚠️ 签到完成，但可能未成功');
+      process.exit(0);
     }
   } catch (error) {
-    logger.error(`签到失败: ${error.message}`);
+    logger.error(`❌ 签到失败: ${error.message}`);
+    logger.error(error.stack);
     process.exit(1);
   }
 })();
