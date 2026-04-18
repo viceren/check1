@@ -69,25 +69,36 @@ async function autoCheckin() {
       console.log('🔐 未登录，需要先登录');
       
       // 在右侧"登录签到续期"区域输入密钥
-      // 找到密码输入框（右侧区域的）
-      const passwordInputs = await page.locator('input[type="password"]').all();
+      // 找到密码输入框 - 优先使用精确选择器
+      console.log('🔍 寻找API Key输入框...');
       
-      if (passwordInputs.length === 0) {
-        console.error('⚠️ 未找到密码输入框，尝试使用其他选择器');
-        // 尝试其他可能的密码输入框选择器
-        const otherInputs = await page.locator('input[type="text"], input[placeholder*="API"], input[placeholder*="key"]').all();
-        if (otherInputs.length === 0) {
-          throw new Error('无法找到密码输入框');
-        }
-        // 使用最后一个输入框
-        const targetInput = otherInputs[otherInputs.length - 1];
-        await targetInput.fill(CHECKIN_KEY);
-        console.log('✅ 成功输入密钥（使用备用选择器）');
-      } else {
-        // 使用最后一个密码输入框（通常是右侧的）
-        const targetInput = passwordInputs[passwordInputs.length - 1];
-        await targetInput.fill(CHECKIN_KEY);
+      // 尝试精确选择器
+      const exactInput = page.locator('input.ci-input#renewKey[type="password"]');
+      if (await exactInput.count() > 0) {
+        console.log('✅ 找到精确的API Key输入框');
+        await exactInput.fill(CHECKIN_KEY);
         console.log('✅ 成功输入密钥');
+      } else {
+        // 尝试其他选择器
+        const passwordInputs = await page.locator('input[type="password"]').all();
+        
+        if (passwordInputs.length === 0) {
+          console.error('⚠️ 未找到密码输入框，尝试使用其他选择器');
+          // 尝试其他可能的密码输入框选择器
+          const otherInputs = await page.locator('input[type="text"], input[placeholder*="API"], input[placeholder*="key"]').all();
+          if (otherInputs.length === 0) {
+            throw new Error('无法找到密码输入框');
+          }
+          // 使用最后一个输入框
+          const targetInput = otherInputs[otherInputs.length - 1];
+          await targetInput.fill(CHECKIN_KEY);
+          console.log('✅ 成功输入密钥（使用备用选择器）');
+        } else {
+          // 使用最后一个密码输入框（通常是右侧的）
+          const targetInput = passwordInputs[passwordInputs.length - 1];
+          await targetInput.fill(CHECKIN_KEY);
+          console.log('✅ 成功输入密钥');
+        }
       }
       
       // 截图记录输入后状态
@@ -96,6 +107,7 @@ async function autoCheckin() {
       // 点击登录按钮 - 尝试多种选择器
       console.log('🖱️ 寻找登录按钮...');
       const loginButtonSelectors = [
+        'button.ci-btn.renew',
         'button:has-text("登录")',
         'button[type="submit"]',
         'button:has-text("确认")',
