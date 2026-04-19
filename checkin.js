@@ -65,7 +65,7 @@ async function waitAndHandleCaptchaWithRetry(page) {
 
     console.log(`🔐 第${attempt}轮检测到滑动验证码，开始处理...`);
     await handleSliderCaptcha(page);
-
+,
     // 给页面时间完成校验回调
     await page.waitForTimeout(2500);
 
@@ -98,6 +98,25 @@ async function hasSessionExpiredHint(page) {
 
   const pageText = await page.innerText('body').catch(() => '');
   return hints.some((hint) => pageText.includes(hint));
+}
+
+/**
+ * 判断页面是否已进入有效登录态
+ * 依据：已绑定邮箱 / 退出登录 / 签到相关按钮
+ * @param {import('playwright').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function isLoggedIn(page) {
+  const pageText = await page.innerText('body').catch(() => '');
+
+  if (pageText.includes('已绑定:') || pageText.includes('退出登录')) {
+    return true;
+  }
+
+  const hasCheckinBtn = await page.locator('button:has-text("签到续期"), button:has-text("签到"), button#checkinBtn.ci-btn.renew').count() > 0;
+  const hasSignedBtn = await page.locator('button:has-text("今日已签到")').count() > 0;
+
+  return hasCheckinBtn || hasSignedBtn;
 }
 
 /**
@@ -162,11 +181,9 @@ async function tryLoginWithRetry(page) {
 
     await page.waitForTimeout(2500);
 
-    const hasCheckinBtn = await page.locator('button:has-text("签到续期"), button:has-text("签到"), button#checkinBtn.ci-btn.renew').count() > 0;
-    const hasSignedBtn = await page.locator('button:has-text("今日已签到")').count() > 0;
-
-    if (hasCheckinBtn || hasSignedBtn) {
-      console.log('✅ 登录状态有效');
+    const loggedIn = await isLoggedIn(page);
+    if (loggedIn) {
+      console.log('✅ 登录状态有效（检测到邮箱/退出登录/签到按钮）');
       return true;
     }
 
@@ -227,18 +244,11 @@ async function autoCheckin() {
     await page.screenshot({ path: initialScreenshotPath, fullPage: true });
     console.log(`📸 已保存初始状态截图: ${initialScreenshotPath}`);
     
-    // 检查是否已经登录（是否有"签到"或"签到续期"按钮或"今日已签到"按钮）
-    const hasCheckinButton1 = await page.locator('button:has-text("签到续期")').count() > 0;
-    const hasCheckinButton2 = await page.locator('button:has-text("签到")').count() > 0;
-    const hasSignedButton = await page.locator('button:has-text("今日已签到")').count() > 0;
-    
-    const hasCheckinButton = hasCheckinButton1 || hasCheckinButton2;
-    
-    if (hasCheckinButton) {
+    // 检查是否已经登录（优先依据绑定邮箱/退出登录等稳定标识）
+    const initialLoggedIn = await isLoggedIn(page);
+
+    if (initialLoggedIn) {
       console.log('✅ 检测到已登录状态');
-    } else if (hasSignedButton) {
-      console.log('🎉 检测到今日已签到状态');
-      return true;
     } else {
       console.log('🔐 未登录，需要先登录');
       
@@ -350,7 +360,7 @@ async function autoCheckin() {
     
     if (await todayCell.count() === 0) {
       console.log(`❌ 未找到日期${today}的日历单元格，判定签到失败`);
-      return false;
+      throw new Error(`未找到日期${today}的日历单元格`);
     }
     
     // 检查父元素是否有签到标记
@@ -359,7 +369,7 @@ async function autoCheckin() {
     
     if (!hasSignMark) {
       console.log(`❌ ${today}号未发现签到标记，判定签到失败`);
-      return false;
+      throw new Error(`${today}号未发现签到标记`);
     }
     
     console.log(`🎉 签到成功！${today}号已有签到标记`);
@@ -491,7 +501,7 @@ async function handleSliderCaptcha(page) {
     const success = await autoCheckin();
     
     if (success) {
-      console.log('✅ 签到成功完成');
+      console.log('✅ 签到成功');
       process.exit(0);
     } else {
       console.log('❌ 签到失败');

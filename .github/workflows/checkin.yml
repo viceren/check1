@@ -66,8 +66,9 @@ jobs:
         with:
           name: checkin-results-${{ github.run_number }}
           path: |
-            *.log
-            *.png
+            checkin.log
+            artifacts/*.png
+            artifacts/**/*.png
           retention-days: 7
 
       - name: Show result
