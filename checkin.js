@@ -164,26 +164,24 @@ async function tryLoginWithRetry(page) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`🔄 第${attempt}/${maxAttempts}次尝试登录...`);
 
-    // 优先精确输入框，否则回退到通用输入框
-    const exactInput = page.locator('input.ci-input#renewKey[type="password"]');
-    if (await exactInput.count() > 0) {
-      await exactInput.fill(CHECKIN_KEY);
-      console.log('✅ 已输入密钥（精确输入框）');
-    } else {
-      const passwordInputs = await page.locator('input[type="password"]').all();
-      if (passwordInputs.length > 0) {
-        await passwordInputs[passwordInputs.length - 1].fill(CHECKIN_KEY);
-        console.log('✅ 已输入密钥（密码输入框）');
-      } else {
-        const otherInputs = await page.locator('input[type="text"], input[placeholder*="API"], input[placeholder*="key"]').all();
-        if (otherInputs.length === 0) {
-          console.log('⚠️ 未找到可用的密钥输入框');
-          continue;
-        }
-        await otherInputs[otherInputs.length - 1].fill(CHECKIN_KEY);
-        console.log('✅ 已输入密钥（备用输入框）');
-      }
+    // 强制使用指定输入框：<input class="ci-input" id="renewKey" ...>
+    const exactInput = page.locator('input#renewKey.ci-input[type="password"]');
+    if (await exactInput.count() === 0) {
+      console.log('❌ 未找到指定的 API Key 输入框 #renewKey.ci-input');
+      continue;
     }
+
+    await exactInput.first().click({ timeout: 5000 });
+    await exactInput.first().fill('');
+    await exactInput.first().fill(CHECKIN_KEY);
+
+    const typedValue = await exactInput.first().inputValue().catch(() => '');
+    if (!typedValue || typedValue !== CHECKIN_KEY) {
+      console.log('❌ API Key 输入校验失败（输入框值为空或不一致）');
+      continue;
+    }
+
+    console.log('✅ 已输入 API Key 到 #renewKey（并通过输入校验）');
 
     const loginButtonSelectors = [
       'button.ci-btn.renew',
