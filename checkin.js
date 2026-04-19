@@ -6,6 +6,7 @@
 require('dotenv').config();
 const { chromium } = require('playwright');
 const fs = require('fs');
+const path = require('path');
 
 // 获取密钥
 const CHECKIN_KEY = process.env.CHECKIN_KEY;
@@ -16,6 +17,69 @@ if (!CHECKIN_KEY) {
 
 // 签到网站URL
 const CHECKIN_URL = 'https://gpt.qt.cool/checkin';
+
+// 截图输出目录（便于 Actions 归档和定位）
+const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || 'artifacts';
+
+/**
+ * 检测当前页面是否出现滑动验证码
+ * @param {import('playwright').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function detectSliderCaptcha(page) {
+  const selectors = [
+    '.captcha-slider',
+    '.slider-captcha',
+    '[class*="slider"][class*="captcha"]',
+    '[class*="captcha"][class*="slider"]',
+    '.geetest',
+    '.nc-container'
+  ];
+
+  for (const selector of selectors) {
+    if (await page.locator(selector).count() > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 等待并处理验证码（支持多次检测与重试）
+ * @param {import('playwright').Page} page
+ * @returns {Promise<void>}
+ */
+async function waitAndHandleCaptchaWithRetry(page) {
+  const maxAttempts = 3;
+  const waitPerRoundMs = 4000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`⏳ 第${attempt}/${maxAttempts}轮：等待验证码或结果出现（${waitPerRoundMs}ms）...`);
+    await page.waitForTimeout(waitPerRoundMs);
+
+    const hasCaptcha = await detectSliderCaptcha(page);
+    if (!hasCaptcha) {
+      console.log(`ℹ️ 第${attempt}轮未检测到滑动验证码`);
+      continue;
+    }
+
+    console.log(`🔐 第${attempt}轮检测到滑动验证码，开始处理...`);
+    await handleSliderCaptcha(page);
+
+    // 给页面时间完成校验回调
+    await page.waitForTimeout(2500);
+
+    const stillHasCaptcha = await detectSliderCaptcha(page);
+    if (!stillHasCaptcha) {
+      console.log('✅ 验证码已消失，疑似验证通过');
+      return;
+    }
+
+    console.log(`⚠️ 第${attempt}轮处理后验证码仍存在，准备重试`);
+  }
+
+  console.log('⚠️ 多轮检测后仍未稳定通过验证码，继续后续结果校验流程');
+}
 
 /**
  * 主签到函数
@@ -52,9 +116,14 @@ async function autoCheckin() {
     // 等待页面完全加载
     await page.waitForTimeout(2000);
     
+    // 确保截图目录存在
+    fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    console.log(`📁 截图输出目录: ${path.resolve(SCREENSHOT_DIR)}`);
+
     // 截图记录初始状态
-    await page.screenshot({ path: '1_initial.png', fullPage: true });
-    console.log('📸 已保存初始状态截图: 1_initial.png');
+    const initialScreenshotPath = path.join(SCREENSHOT_DIR, '1_initial.png');
+    await page.screenshot({ path: initialScreenshotPath, fullPage: true });
+    console.log(`📸 已保存初始状态截图: ${initialScreenshotPath}`);
     
     // 检查是否已经登录（是否有"签到"或"签到续期"按钮或"今日已签到"按钮）
     const hasCheckinButton1 = await page.locator('button:has-text("签到续期")').count() > 0;
@@ -105,7 +174,9 @@ async function autoCheckin() {
       }
       
       // 截图记录输入后状态
-      await page.screenshot({ path: '2_after_input.png', fullPage: true });
+      const afterInputScreenshotPath = path.join(SCREENSHOT_DIR, '2_after_input.png');
+      await page.screenshot({ path: afterInputScreenshotPath, fullPage: true });
+      console.log(`📸 已保存输入后截图: ${afterInputScreenshotPath}`);
       
       // 点击登录按钮 - 尝试多种选择器
       console.log('🖱️ 寻找登录按钮...');
@@ -202,7 +273,9 @@ async function autoCheckin() {
     }
     
     // 截图记录登录后状态
-    await page.screenshot({ path: '3_logged_in.png', fullPage: true });
+    const loggedInScreenshotPath = path.join(SCREENSHOT_DIR, '3_logged_in.png');
+    await page.screenshot({ path: loggedInScreenshotPath, fullPage: true });
+    console.log(`📸 已保存登录后截图: ${loggedInScreenshotPath}`);
     
     // 点击"签到"或"签到续期"按钮 - 优先使用精确选择器
     console.log('🖱️ 寻找并点击签到按钮...');
@@ -254,38 +327,27 @@ async function autoCheckin() {
       }
     }
     
-    // 等待验证码或结果出现
-    console.log('⏳ 等待验证码或结果出现...');
+    // 等待并尝试处理验证码（多轮检测 + 重试）
+    await waitAndHandleCaptchaWithRetry(page);
+
+    // 截图查看点击后的状态（含验证码处理结果）
+    const afterClickScreenshotPath = path.join(SCREENSHOT_DIR, '4_after_click.png');
+    await page.screenshot({ path: afterClickScreenshotPath, fullPage: true });
+    console.log(`📸 已保存点击后截图: ${afterClickScreenshotPath}`);
+
+    // 等待签到结果
+    console.log('⏳ 等待签到结果...');
     await page.waitForTimeout(5000);
-    
-    // 截图查看是否出现验证码
-    await page.screenshot({ path: '4_after_click.png', fullPage: true });
-    console.log('📸 已保存点击后截图: 4_after_click.png');
-    
-    // 检查是否出现滑动验证码
-    const hasSliderCaptcha = await page.locator('.captcha-slider, .slider-captcha, [class*="slider"][class*="captcha"]').count() > 0;
-    
-    if (hasSliderCaptcha) {
-      console.log('🔐 检测到滑动验证码，开始处理...');
-      await handleSliderCaptcha(page);
-      // 处理完验证码后再等待结果
-      console.log('⏳ 等待验证码处理结果...');
-      await page.waitForTimeout(5000);
-    } else {
-      console.log('ℹ️ 未检测到滑动验证码');
-      // 等待签到结果
-      console.log('⏳ 等待签到结果...');
-      await page.waitForTimeout(5000);
-      
-      // 刷新页面以确保状态更新
-      console.log('🔄 刷新页面以更新签到状态...');
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
-    }
+
+    // 刷新页面以确保状态更新
+    console.log('🔄 刷新页面以更新签到状态...');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(3000);
     
     // 截图记录最终结果
-    await page.screenshot({ path: '5_final_result.png', fullPage: true });
-    console.log('📸 已保存最终结果截图: 5_final_result.png');
+    const finalResultScreenshotPath = path.join(SCREENSHOT_DIR, '5_final_result.png');
+    await page.screenshot({ path: finalResultScreenshotPath, fullPage: true });
+    console.log(`📸 已保存最终结果截图: ${finalResultScreenshotPath}`);
     
     // 检查签到成功状态
     console.log('🔍 检查签到成功状态...');
@@ -297,45 +359,45 @@ async function autoCheckin() {
       return true;
     }
     
-    // 2. 检查签到日历中今天是否有标记
+    // 2. 严格检查签到日历中今天是否有标记
     const today = new Date().getDate();
     console.log(`📅 检查今天(${today}号)是否有签到标记...`);
     const todayCell = await page.locator(`text="${today}"`).first();
     
-    if (await todayCell.count() > 0) {
-      // 检查父元素是否有签到标记
-      const parent = await todayCell.locator('..');
-      const hasSignMark = await parent.locator('.dot, .checked, [class*="sign"]').count() > 0;
-      
-      if (hasSignMark) {
-        console.log(`🎉 签到成功！${today}号已有签到标记`);
-        return true;
-      } else {
-        console.log(`ℹ️ ${today}号未发现签到标记`);
-      }
-    } else {
-      console.log(`ℹ️ 未找到日期${today}的日历单元格`);
+    if (await todayCell.count() === 0) {
+      console.log(`❌ 未找到日期${today}的日历单元格，判定签到失败`);
+      return false;
     }
     
-    // 3. 检查页面是否有成功提示
+    // 检查父元素是否有签到标记
+    const parent = await todayCell.locator('..');
+    const hasSignMark = await parent.locator('.dot, .checked, [class*="sign"]').count() > 0;
+    
+    if (!hasSignMark) {
+      console.log(`❌ ${today}号未发现签到标记，判定签到失败`);
+      return false;
+    }
+    
+    console.log(`🎉 签到成功！${today}号已有签到标记`);
+    
+    // 3. 辅助检查页面是否有成功提示
     const pageContent = await page.content();
     if (pageContent.includes('签到成功') || pageContent.includes('今日已签到')) {
       console.log('🎉 检测到签到成功提示');
-      return true;
+    } else {
+      console.log('ℹ️ 未检测到明确的签到成功提示，但日历标记已确认');
     }
     
-    // 4. 检查按钮文本是否变为"今日已签到"
+    // 4. 辅助检查按钮文本是否变为"今日已签到"
     const checkinButton = page.locator('button#checkinBtn.ci-btn.renew');
     if (await checkinButton.count() > 0) {
       const buttonText = await checkinButton.textContent();
       if (buttonText && (buttonText.includes('今日已签到') || buttonText.includes('已签到'))) {
         console.log(`🎉 检测到按钮状态变为: ${buttonText}`);
-        return true;
       }
     }
     
-    console.log('⚠️ 未检测到明确的签到成功标志');
-    return false;
+    return true;
     
   } catch (error) {
     console.error(`❌ 签到过程中发生错误: ${error.message}`);
@@ -345,8 +407,9 @@ async function autoCheckin() {
       try {
         const pages = await browser.pages();
         if (pages.length > 0) {
-          await pages[0].screenshot({ path: 'error_screenshot.png', fullPage: true });
-          console.log('📸 已保存错误页面截图: error_screenshot.png');
+          const errorScreenshotPath = path.join(SCREENSHOT_DIR, 'error_screenshot.png');
+          await pages[0].screenshot({ path: errorScreenshotPath, fullPage: true });
+          console.log(`📸 已保存错误页面截图: ${errorScreenshotPath}`);
         }
       } catch (screenshotError) {
         console.error(`截图保存失败: ${screenshotError.message}`);
@@ -447,8 +510,8 @@ async function handleSliderCaptcha(page) {
       console.log('✅ 签到成功完成');
       process.exit(0);
     } else {
-      console.log('⚠️ 签到完成，但可能未成功');
-      process.exit(0);
+      console.log('❌ 签到失败');
+      process.exit(1);
     }
   } catch (error) {
     console.error(`❌ 签到失败: ${error.message}`);
