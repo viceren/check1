@@ -82,6 +82,40 @@ async function waitAndHandleCaptchaWithRetry(page) {
 }
 
 /**
+ * 尝试将页面切换为中文（点击右上角语言切换）
+ * @param {import('playwright').Page} page
+ * @returns {Promise<void>}
+ */
+async function switchToChineseIfNeeded(page) {
+  const langSelectors = [
+    'button.n5-chip.i18n-switch',
+    '.i18n-switch',
+    'button:has-text("中文")',
+    'a:has-text("中文")',
+    '[role="button"]:has-text("中文")',
+    'button:has-text("ZH")',
+    'a:has-text("ZH")',
+    '[role="button"]:has-text("ZH")'
+  ];
+
+  for (const selector of langSelectors) {
+    const el = page.locator(selector).first();
+    if (await el.count() > 0) {
+      try {
+        await el.click({ timeout: 3000 });
+        await page.waitForTimeout(1500);
+        console.log(`🌐 已尝试切换页面语言为中文: ${selector}`);
+        return;
+      } catch (error) {
+        console.log(`ℹ️ 语言切换点击失败(${selector}): ${error.message}`);
+      }
+    }
+  }
+
+  console.log('ℹ️ 未找到语言切换按钮（中文/ZH），继续当前语言执行');
+}
+
+/**
  * 判断页面是否出现登录失效提示
  * @param {import('playwright').Page} page
  * @returns {Promise<boolean>}
@@ -238,6 +272,9 @@ async function autoCheckin() {
     // 确保截图目录存在
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
     console.log(`📁 截图输出目录: ${path.resolve(SCREENSHOT_DIR)}`);
+
+    // 优先尝试切换中文界面，再继续后续步骤
+    await switchToChineseIfNeeded(page);
 
     // 截图记录初始状态
     const initialScreenshotPath = path.join(SCREENSHOT_DIR, '1_initial.png');
