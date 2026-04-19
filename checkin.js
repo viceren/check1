@@ -82,6 +82,108 @@ async function waitAndHandleCaptchaWithRetry(page) {
 }
 
 /**
+ * 判断页面是否出现登录失效提示
+ * @param {import('playwright').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function hasSessionExpiredHint(page) {
+  const hints = [
+    '未登录',
+    '会话已过期',
+    '登录已过期',
+    '请先登录',
+    'token 过期',
+    'Token 过期'
+  ];
+
+  const pageText = await page.innerText('body').catch(() => '');
+  return hints.some((hint) => pageText.includes(hint));
+}
+
+/**
+ * 填充 KEY 并点击登录（可重试）
+ * @param {import('playwright').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function tryLoginWithRetry(page) {
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`🔄 第${attempt}/${maxAttempts}次尝试登录...`);
+
+    // 优先精确输入框，否则回退到通用输入框
+    const exactInput = page.locator('input.ci-input#renewKey[type="password"]');
+    if (await exactInput.count() > 0) {
+      await exactInput.fill(CHECKIN_KEY);
+      console.log('✅ 已输入密钥（精确输入框）');
+    } else {
+      const passwordInputs = await page.locator('input[type="password"]').all();
+      if (passwordInputs.length > 0) {
+        await passwordInputs[passwordInputs.length - 1].fill(CHECKIN_KEY);
+        console.log('✅ 已输入密钥（密码输入框）');
+      } else {
+        const otherInputs = await page.locator('input[type="text"], input[placeholder*="API"], input[placeholder*="key"]').all();
+        if (otherInputs.length === 0) {
+          console.log('⚠️ 未找到可用的密钥输入框');
+          continue;
+        }
+        await otherInputs[otherInputs.length - 1].fill(CHECKIN_KEY);
+        console.log('✅ 已输入密钥（备用输入框）');
+      }
+    }
+
+    const loginButtonSelectors = [
+      'button.ci-btn.renew',
+      'button:has-text("登录")',
+      'button[type="submit"]',
+      'button:has-text("确认")',
+      'button:has-text("提交")'
+    ];
+
+    let clicked = false;
+    for (const selector of loginButtonSelectors) {
+      const button = page.locator(selector);
+      if (await button.count() > 0) {
+        try {
+          await button.first().click({ timeout: 5000 });
+          console.log(`🖱️ 已点击登录按钮: ${selector}`);
+          clicked = true;
+          break;
+        } catch (error) {
+          console.error(`点击登录按钮失败(${selector}): ${error.message}`);
+        }
+      }
+    }
+
+    if (!clicked) {
+      console.log('⚠️ 本轮未成功点击登录按钮');
+      continue;
+    }
+
+    await page.waitForTimeout(2500);
+
+    const hasCheckinBtn = await page.locator('button:has-text("签到续期"), button:has-text("签到"), button#checkinBtn.ci-btn.renew').count() > 0;
+    const hasSignedBtn = await page.locator('button:has-text("今日已签到")').count() > 0;
+
+    if (hasCheckinBtn || hasSignedBtn) {
+      console.log('✅ 登录状态有效');
+      return true;
+    }
+
+    const expiredHint = await hasSessionExpiredHint(page);
+    if (expiredHint) {
+      console.log('⚠️ 检测到“未登录/会话已过期”提示，准备重试登录');
+      continue;
+    }
+
+    // 没有明确过期提示，但也未进入有效登录态，继续重试
+    console.log('⚠️ 登录后仍未进入有效状态，准备重试');
+  }
+
+  return false;
+}
+
+/**
  * 主签到函数
  */
 async function autoCheckin() {
@@ -140,136 +242,18 @@ async function autoCheckin() {
     } else {
       console.log('🔐 未登录，需要先登录');
       
-      // 在右侧"登录签到续期"区域输入密钥
-      // 找到密码输入框 - 优先使用精确选择器
-      console.log('🔍 寻找API Key输入框...');
-      
-      // 尝试精确选择器
-      const exactInput = page.locator('input.ci-input#renewKey[type="password"]');
-      if (await exactInput.count() > 0) {
-        console.log('✅ 找到精确的API Key输入框');
-        await exactInput.fill(CHECKIN_KEY);
-        console.log('✅ 成功输入密钥');
-      } else {
-        // 尝试其他选择器
-        const passwordInputs = await page.locator('input[type="password"]').all();
-        
-        if (passwordInputs.length === 0) {
-          console.error('⚠️ 未找到密码输入框，尝试使用其他选择器');
-          // 尝试其他可能的密码输入框选择器
-          const otherInputs = await page.locator('input[type="text"], input[placeholder*="API"], input[placeholder*="key"]').all();
-          if (otherInputs.length === 0) {
-            throw new Error('无法找到密码输入框');
-          }
-          // 使用最后一个输入框
-          const targetInput = otherInputs[otherInputs.length - 1];
-          await targetInput.fill(CHECKIN_KEY);
-          console.log('✅ 成功输入密钥（使用备用选择器）');
-        } else {
-          // 使用最后一个密码输入框（通常是右侧的）
-          const targetInput = passwordInputs[passwordInputs.length - 1];
-          await targetInput.fill(CHECKIN_KEY);
-          console.log('✅ 成功输入密钥');
-        }
-      }
-      
-      // 截图记录输入后状态
+      const loginSuccess = await tryLoginWithRetry(page);
+
+      // 截图记录登录尝试后状态
       const afterInputScreenshotPath = path.join(SCREENSHOT_DIR, '2_after_input.png');
       await page.screenshot({ path: afterInputScreenshotPath, fullPage: true });
-      console.log(`📸 已保存输入后截图: ${afterInputScreenshotPath}`);
-      
-      // 点击登录按钮 - 尝试多种选择器
-      console.log('🖱️ 寻找登录按钮...');
-      const loginButtonSelectors = [
-        'button.ci-btn.renew',
-        'button:has-text("登录")',
-        'button[type="submit"]',
-        'button:has-text("确认")',
-        'button:has-text("提交")'
-      ];
-      
-      let loginButtonFound = false;
-      for (const selector of loginButtonSelectors) {
-        console.log(`尝试选择器: ${selector}`);
-        const button = page.locator(selector);
-        const count = await button.count();
-        console.log(`找到 ${count} 个元素`);
-        if (count > 0) {
-          console.log(`✅ 找到登录按钮: ${selector}`);
-          try {
-            await button.click({ timeout: 5000 });
-            loginButtonFound = true;
-            break;
-          } catch (error) {
-            console.error(`点击按钮失败: ${error.message}`);
-            continue;
-          }
-        }
+      console.log(`📸 已保存登录尝试后截图: ${afterInputScreenshotPath}`);
+
+      if (!loginSuccess) {
+        throw new Error('多次重试后仍未登录成功（可能未登录或会话已过期）');
       }
-      
-      if (!loginButtonFound) {
-        console.error('⚠️ 未找到登录按钮，尝试点击页面中所有按钮');
-        // 尝试点击所有按钮，看是否有登录功能
-        const allButtons = await page.locator('button').all();
-        console.log(`找到 ${allButtons.length} 个按钮`);
-        for (let i = 0; i < allButtons.length; i++) {
-          const button = allButtons[i];
-          let text = '';
-          try {
-            text = await button.textContent();
-          } catch (error) {
-            text = `按钮${i+1}`;
-          }
-          console.log(`尝试点击按钮: ${text}`);
-          try {
-            await button.click({ timeout: 3000 });
-          } catch (error) {
-            console.error(`点击按钮失败: ${error.message}`);
-            continue;
-          }
-          await page.waitForTimeout(1000);
-          // 检查是否登录成功
-          const hasCheckinBtn = await page.locator('button:has-text("签到续期")').count() > 0;
-          const hasSignedBtn = await page.locator('button:has-text("今日已签到")').count() > 0;
-          if (hasCheckinBtn || hasSignedBtn) {
-            console.log('✅ 登录成功！');
-            loginButtonFound = true;
-            break;
-          }
-        }
-      }
-      
-      if (!loginButtonFound) {
-        throw new Error('无法找到登录按钮');
-      }
-      
-      console.log('🖱️ 点击登录按钮完成');
-      
-      // 等待登录完成
-      await page.waitForTimeout(3000);
-      
-      // 检查是否有"签到"或"签到续期"按钮（即使隐藏也能找到）
-      const checkinButton = page.locator('button#checkinBtn.ci-btn.renew');
-      const buttonCount = await checkinButton.count();
-      if (buttonCount > 0) {
-        console.log('✅ 登录成功，检测到签到按钮');
-      } else {
-        // 尝试"签到续期"按钮
-        const renewCheckinButton = page.locator('button:has-text("签到续期")');
-        const renewCount = await renewCheckinButton.count();
-        if (renewCount > 0) {
-          console.log('✅ 登录成功，检测到"签到续期"按钮');
-        } else {
-          // 尝试"签到"按钮
-          const checkinButtonAlt = page.locator('button:has-text("签到")');
-          const checkinCount = await checkinButtonAlt.count();
-          if (checkinCount > 0) {
-            console.log('✅ 登录成功，检测到"签到"按钮');
-          } else {
-            throw new Error('登录后未找到签到按钮');
-          }
-        }
-      }
+
+      console.log('✅ 登录流程完成');
     }
     
     // 截图记录登录后状态
