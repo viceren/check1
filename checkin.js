@@ -143,10 +143,25 @@ async function hasSessionExpiredHint(page) {
 async function isLoggedIn(page) {
   const pageText = await page.innerText('body').catch(() => '');
 
+  // 检查是否有绑定邮箱或退出登录按钮（最可靠的登录标志）
   if (pageText.includes('已绑定:') || pageText.includes('退出登录')) {
     return true;
   }
 
+  // 检查是否有密码输入框（未登录的标志）
+  const hasPasswordInput = await page.locator('input#renewKey[type="password"]').count() > 0;
+  if (hasPasswordInput) {
+    // 如果有密码输入框，说明还没登录
+    return false;
+  }
+
+  // 检查是否有登录按钮（未登录的标志）
+  const hasLoginButton = await page.locator('button:has-text("登录"), button:has-text("Login")').count() > 0;
+  if (hasLoginButton) {
+    return false;
+  }
+
+  // 最后检查是否有签到按钮
   const hasCheckinBtn = await page.locator('button:has-text("签到续期"), button:has-text("签到"), button#checkinBtn.ci-btn.renew').count() > 0;
   const hasSignedBtn = await page.locator('button:has-text("今日已签到")').count() > 0;
 
@@ -184,11 +199,11 @@ async function tryLoginWithRetry(page) {
     console.log('✅ 已输入 API Key 到 #renewKey（并通过输入校验）');
 
     const loginButtonSelectors = [
-      'button.ci-btn.renew',
-      'button:has-text("登录")',
+      'button:has-text("登录"), button:has-text("Login")',  // 优先查找登录按钮
       'button[type="submit"]',
       'button:has-text("确认")',
-      'button:has-text("提交")'
+      'button:has-text("提交")',
+      'button.ci-btn.renew'  // 最后才使用这个通用选择器
     ];
 
     let clicked = false;
@@ -243,8 +258,8 @@ async function autoCheckin() {
     
     // 启动浏览器
     browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      headless: false,  // 使用有头模式以便观察
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized']
     });
     
     const context = await browser.newContext({
@@ -362,16 +377,38 @@ async function autoCheckin() {
     // 截图查看点击后的状态（含验证码处理结果）
     const afterClickScreenshotPath = path.join(SCREENSHOT_DIR, '4_after_click.png');
     await page.screenshot({ path: afterClickScreenshotPath, fullPage: true });
-    console.log(`📸 已保存点击后截图: ${afterClickScreenshotPath}`);
+    console.log(`📸 已保存点击后截图：${afterClickScreenshotPath}`);
 
     // 等待签到结果
     console.log('⏳ 等待签到结果...');
     await page.waitForTimeout(5000);
+    
+    // 检查是否有任何成功提示消息（Toast/Snackbar/Notification）
+    try {
+      const successMessages = await page.locator('.message, .toast, .snackbar, .notification, [class*="message"], [class*="toast"], [class*="success"]').all();
+      for (const msg of successMessages) {
+        const text = await msg.textContent();
+        if (text && (text.includes('成功') || text.includes('success') || text.includes('已签到'))) {
+          console.log(`✅ 检测到成功提示：${text}`);
+        }
+      }
+    } catch (e) {
+      // 忽略错误
+    }
 
     // 刷新页面以确保状态更新
     console.log('🔄 刷新页面以更新签到状态...');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
+    
+    // 等待日历加载完成
+    console.log('📅 等待日历加载...');
+    try {
+      await page.waitForSelector('.ci-cal-day', { state: 'visible', timeout: 5000 });
+      console.log('✅ 日历已加载');
+    } catch (e) {
+      console.log('⚠️ 日历加载超时，继续检查');
+    }
     
     // 截图记录最终结果
     const finalResultScreenshotPath = path.join(SCREENSHOT_DIR, '5_final_result.png');
@@ -381,14 +418,28 @@ async function autoCheckin() {
     // 检查签到成功状态
     console.log('🔍 检查签到成功状态...');
     
-    // 1. 检查页面是否有"今日已签到"按钮
+    // 1. 检查按钮文本是否变为"今日已签到"或"已签到"
+    const checkinButton = page.locator('button#checkinBtn.ci-btn.renew');
+    if (await checkinButton.count() > 0) {
+      const buttonText = await checkinButton.textContent();
+      console.log(`📝 签到按钮文本：${buttonText}`);
+      // 检查多种可能的成功状态文本
+      const successTexts = ['今日已签到', '已签到', 'Signed', 'Renewed'];
+      const isSuccess = successTexts.some(text => buttonText && buttonText.includes(text));
+      if (isSuccess) {
+        console.log(`🎉 检测到按钮状态变为：${buttonText}`);
+        return true;
+      }
+    }
+    
+    // 2. 检查页面是否有"今日已签到"按钮
     const hasSignedButtonFinal = await page.locator('button:has-text("今日已签到")').count() > 0;
     if (hasSignedButtonFinal) {
       console.log('🎉 检测到"今日已签到"按钮，签到成功！');
       return true;
     }
     
-    // 2. 严格检查签到日历中今天是否有标记
+    // 3. 严格检查签到日历中今天是否有标记
     const today = new Date().getDate();
     console.log(`📅 检查今天(${today}号)是否有签到标记...`);
     const todayCell = await page.locator(`text="${today}"`).first();
@@ -402,30 +453,20 @@ async function autoCheckin() {
         console.log(`🎉 签到成功！${today}号已有签到标记`);
         return true;
       } else {
-        console.log(`ℹ️ ${today}号未发现签到标记，继续检查其他标志`);
+        console.log(`ℹ️ ${today}号未发现签到标记`);
       }
     } else {
-      console.log(`ℹ️ 未找到日期${today}的日历单元格，继续检查其他标志`);
-    }
-    
-    // 3. 辅助检查页面是否有成功提示
-    const pageContent = await page.content();
-    if (pageContent.includes('签到成功') || pageContent.includes('今日已签到')) {
-      console.log('🎉 检测到签到成功提示');
-      return true;
-    }
-    
-    // 4. 辅助检查按钮文本是否变为"今日已签到"
-    const checkinButton = page.locator('button#checkinBtn.ci-btn.renew');
-    if (await checkinButton.count() > 0) {
-      const buttonText = await checkinButton.textContent();
-      if (buttonText && (buttonText.includes('今日已签到') || buttonText.includes('已签到'))) {
-        console.log(`🎉 检测到按钮状态变为：${buttonText}`);
-        return true;
-      }
+      console.log(`ℹ️ 未找到日期${today}的日历单元格`);
     }
     
     console.log('⚠️ 未检测到明确的签到成功标志');
+    
+    // 保存页面 HTML 以便调试
+    const pageHtml = await page.content();
+    const htmlPath = path.join(SCREENSHOT_DIR, 'debug_page.html');
+    fs.writeFileSync(htmlPath, pageHtml);
+    console.log(`📄 已保存页面 HTML: ${htmlPath}`);
+    
     return false;
     
   } catch (error) {
