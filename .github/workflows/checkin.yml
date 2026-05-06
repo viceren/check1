@@ -2,7 +2,7 @@ name: Auto Checkin
 
 on:
   schedule:
-    - cron: '30 20 * * *'  # 每天UTC时间0点执行（北京时间早上8点30分）
+    - cron: '31 23 * * *'  # 每天UTC时间0点执行（北京时间早上8点30分）
   workflow_dispatch:  # 允许手动触发
     inputs:
       log_level:
