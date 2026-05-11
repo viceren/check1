@@ -56,7 +56,8 @@ async function autoCheckin() {
     const page = await context.newPage();
     
     console.log(`🌐 正在访问签到页面: ${CHECKIN_URL}`);
-    await page.goto(CHECKIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(CHECKIN_URL, { waitUntil: 'networkidle', timeout: 30000 });
+    console.log(`📍 当前URL: ${page.url()}`);
     
     await page.waitForTimeout(2000);
     
@@ -66,54 +67,43 @@ async function autoCheckin() {
     
     console.log('🔐 开始登录流程');
     
-    const apiKeyInput = page.locator('input#renewKey.ci-input[type="password"]');
-    const altInput = page.locator('input[type="password"]').first();
+    const passwordInput = page.locator('input[type="password"]').first();
+    const inputCount = await passwordInput.count();
     
-    let inputToUse;
-    if (await apiKeyInput.count() > 0) {
-      inputToUse = apiKeyInput;
-      console.log('✅ 找到主要API Key输入框');
-    } else if (await altInput.count() > 0) {
-      inputToUse = altInput;
-      console.log('✅ 使用备用输入框');
-    } else {
-      console.log('🔍 尝试查找所有输入框...');
-      const allInputs = page.locator('input');
-      const inputCount = await allInputs.count();
-      console.log(`找到 ${inputCount} 个输入框`);
-      
-      if (inputCount > 0) {
-        inputToUse = allInputs.first();
-        console.log('✅ 使用第一个输入框');
-      } else {
-        throw new Error('未找到任何输入框');
-      }
+    if (inputCount === 0) {
+      throw new Error('未找到密码输入框');
     }
     
-    await inputToUse.click();
-    await inputToUse.fill('');
-    await inputToUse.fill(CHECKIN_KEY);
+    console.log('✅ 找到密码输入框');
+    await passwordInput.click();
+    await passwordInput.fill('');
+    await passwordInput.fill(CHECKIN_KEY);
     console.log('✅ 已输入API Key');
     
     await saveScreenshot(page, '02_after_input.png');
     
-    const loginBtn = page.locator('button.ci-btn.renew:has-text("登录")');
-    const altLoginBtn = page.locator('button:has-text("登录"), button:has-text("确定"), button:has-text("提交")').first();
+    const loginBtn = page.locator('button:has-text("登录")').first();
+    const loginBtnCount = await loginBtn.count();
     
-    let btnToUse;
-    if (await loginBtn.count() > 0) {
-      btnToUse = loginBtn;
-      console.log('✅ 找到主要登录按钮');
+    if (loginBtnCount === 0) {
+      const submitBtn = page.locator('button[type="submit"]').first();
+      if (await submitBtn.count() > 0) {
+        console.log('✅ 使用提交按钮登录');
+        await submitBtn.click({ timeout: 5000 });
+      } else {
+        console.log('⚠️ 未找到登录按钮，尝试直接触发回车');
+        await page.keyboard.press('Enter');
+      }
     } else {
-      console.log('🔍 尝试备用登录按钮...');
-      btnToUse = altLoginBtn;
-      console.log('✅ 使用备用登录按钮');
+      console.log('✅ 找到登录按钮');
+      await loginBtn.click({ timeout: 5000 });
     }
     
-    console.log('🖱️ 点击登录按钮');
-    await btnToUse.click({ timeout: 5000 });
-    
-    await page.waitForTimeout(3000);
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {
+      console.log('⚠️ 网络空闲等待超时，继续执行');
+    });
+    await page.waitForTimeout(2000);
+    console.log(`📍 登录后URL: ${page.url()}`);
     
     await saveScreenshot(page, '03_after_login.png');
     
@@ -121,43 +111,78 @@ async function autoCheckin() {
     console.log('📄 页面内容预览:', pageText.substring(0, 500));
     
     let checkinSuccess = false;
+    const successKeywords = ['今日已签到', '已签到', '签到成功', 'success', '打卡成功', '签到奖励'];
     
-    if (pageText.includes('今日已签到') || pageText.includes('已签到') || 
-        pageText.includes('签到成功') || pageText.includes('success')) {
-      console.log('🎉 检测到签到成功标识！');
-      checkinSuccess = true;
-    }
-    
-    const checkinBtn = page.locator('button.ci-btn.checkin, button:has-text("签到"), button:has-text("立即签到"), button:has-text("打卡")');
-    const btnCount = await checkinBtn.count();
-    console.log(`🔍 查找签到按钮: 找到 ${btnCount} 个`);
-    
-    if (btnCount > 0) {
-      console.log('🖱️ 点击签到按钮');
-      await checkinBtn.first().click({ timeout: 5000 });
-      await page.waitForTimeout(3000);
-      await saveScreenshot(page, '04_after_checkin.png');
-      
-      const finalText = await page.content();
-      if (finalText.includes('今日已签到') || finalText.includes('已签到') || 
-          finalText.includes('签到成功') || finalText.includes('success') ||
-          finalText.includes('打卡成功')) {
-        console.log('🎉 点击签到按钮后检测到成功标识！');
+    for (const keyword of successKeywords) {
+      if (pageText.includes(keyword)) {
+        console.log(`🎉 检测到签到成功关键词: "${keyword}"`);
         checkinSuccess = true;
+        break;
       }
     }
     
     if (checkinSuccess) {
       console.log('✅ 签到成功！');
+      await saveScreenshot(page, '04_success.png');
       return true;
     }
     
-    if (pageText.includes('错误') || pageText.includes('error') || 
-        pageText.includes('失败') || pageText.includes('invalid') ||
-        pageText.includes('失败') || pageText.includes('请先登录')) {
-      console.error('❌ 签到失败，检测到错误信息');
-      await saveScreenshot(page, '04_error.png');
-      return false;
+    const errorKeywords = ['错误', 'error', '失败', 'invalid', '请先登录', '密钥无效', 'Key无效'];
+    for (const keyword of errorKeywords) {
+      if (pageText.includes(keyword)) {
+        console.error(`❌ 检测到错误关键词: "${keyword}"`);
+        await saveScreenshot(page, '04_error.png');
+        return false;
+      }
+    }
+    
+    const checkinSelectors = [
+      'button:has-text("签到")',
+      'button:has-text("立即签到")', 
+      'button:has-text("打卡")',
+      'button:has-text("今日签到")',
+      'button.ci-btn.checkin',
+      'a:has-text("签到")',
+      'div[class*="checkin"] button',
+      'div[class*="sign"] button'
+    ];
+    
+    let checkinBtn = null;
+    for (const selector of checkinSelectors) {
+      const btn = page.locator(selector).first();
+      if (await btn.count() > 0) {
+        checkinBtn = btn;
+        console.log(`✅ 找到签到按钮 (选择器: ${selector})`);
+        break;
+      }
+    }
+    
+    if (checkinBtn) {
+      console.log('🖱️ 点击签到按钮');
+      await checkinBtn.click({ timeout: 5000 });
+      
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+        console.log('⚠️ 签到后网络空闲等待超时');
+      });
+      await page.waitForTimeout(2000);
+      await saveScreenshot(page, '04_after_checkin.png');
+      
+      const finalText = await page.content();
+      for (const keyword of successKeywords) {
+        if (finalText.includes(keyword)) {
+          console.log(`🎉 签到后检测到成功关键词: "${keyword}"`);
+          checkinSuccess = true;
+          break;
+        }
+      }
+    } else {
+      console.log('⚠️ 未找到签到按钮，可能登录即完成签到');
+    }
+    
+    if (checkinSuccess) {
+      console.log('✅ 签到成功！');
+      await saveScreenshot(page, '04_success.png');
+      return true;
     }
     
     console.log('⚠️ 无法明确判断签到结果，但流程已执行完成');
