@@ -67,40 +67,95 @@ async function autoCheckin() {
     console.log('🔐 开始登录流程');
     
     const apiKeyInput = page.locator('input#renewKey.ci-input[type="password"]');
-    if (await apiKeyInput.count() === 0) {
-      throw new Error('未找到API Key输入框');
+    const altInput = page.locator('input[type="password"]').first();
+    
+    let inputToUse;
+    if (await apiKeyInput.count() > 0) {
+      inputToUse = apiKeyInput;
+      console.log('✅ 找到主要API Key输入框');
+    } else if (await altInput.count() > 0) {
+      inputToUse = altInput;
+      console.log('✅ 使用备用输入框');
+    } else {
+      console.log('🔍 尝试查找所有输入框...');
+      const allInputs = page.locator('input');
+      const inputCount = await allInputs.count();
+      console.log(`找到 ${inputCount} 个输入框`);
+      
+      if (inputCount > 0) {
+        inputToUse = allInputs.first();
+        console.log('✅ 使用第一个输入框');
+      } else {
+        throw new Error('未找到任何输入框');
+      }
     }
     
-    await apiKeyInput.click();
-    await apiKeyInput.fill('');
-    await apiKeyInput.fill(CHECKIN_KEY);
+    await inputToUse.click();
+    await inputToUse.fill('');
+    await inputToUse.fill(CHECKIN_KEY);
     console.log('✅ 已输入API Key');
     
     await saveScreenshot(page, '02_after_input.png');
     
     const loginBtn = page.locator('button.ci-btn.renew:has-text("登录")');
-    if (await loginBtn.count() === 0) {
-      throw new Error('未找到登录按钮');
+    const altLoginBtn = page.locator('button:has-text("登录"), button:has-text("确定"), button:has-text("提交")').first();
+    
+    let btnToUse;
+    if (await loginBtn.count() > 0) {
+      btnToUse = loginBtn;
+      console.log('✅ 找到主要登录按钮');
+    } else {
+      console.log('🔍 尝试备用登录按钮...');
+      btnToUse = altLoginBtn;
+      console.log('✅ 使用备用登录按钮');
     }
     
     console.log('🖱️ 点击登录按钮');
-    await loginBtn.click();
+    await btnToUse.click({ timeout: 5000 });
     
     await page.waitForTimeout(3000);
     
     await saveScreenshot(page, '03_after_login.png');
     
     const pageText = await page.content();
+    console.log('📄 页面内容预览:', pageText.substring(0, 500));
+    
+    let checkinSuccess = false;
     
     if (pageText.includes('今日已签到') || pageText.includes('已签到') || 
         pageText.includes('签到成功') || pageText.includes('success')) {
-      console.log('🎉 签到成功！');
+      console.log('🎉 检测到签到成功标识！');
+      checkinSuccess = true;
+    }
+    
+    const checkinBtn = page.locator('button.ci-btn.checkin, button:has-text("签到"), button:has-text("立即签到"), button:has-text("打卡")');
+    const btnCount = await checkinBtn.count();
+    console.log(`🔍 查找签到按钮: 找到 ${btnCount} 个`);
+    
+    if (btnCount > 0) {
+      console.log('🖱️ 点击签到按钮');
+      await checkinBtn.first().click({ timeout: 5000 });
+      await page.waitForTimeout(3000);
+      await saveScreenshot(page, '04_after_checkin.png');
+      
+      const finalText = await page.content();
+      if (finalText.includes('今日已签到') || finalText.includes('已签到') || 
+          finalText.includes('签到成功') || finalText.includes('success') ||
+          finalText.includes('打卡成功')) {
+        console.log('🎉 点击签到按钮后检测到成功标识！');
+        checkinSuccess = true;
+      }
+    }
+    
+    if (checkinSuccess) {
+      console.log('✅ 签到成功！');
       return true;
     }
     
     if (pageText.includes('错误') || pageText.includes('error') || 
-        pageText.includes('失败') || pageText.includes('invalid')) {
-      console.error('❌ 签到可能失败，检查页面内容');
+        pageText.includes('失败') || pageText.includes('invalid') ||
+        pageText.includes('失败') || pageText.includes('请先登录')) {
+      console.error('❌ 签到失败，检测到错误信息');
       await saveScreenshot(page, '04_error.png');
       return false;
     }
