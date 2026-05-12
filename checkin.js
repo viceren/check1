@@ -25,6 +25,81 @@ async function switchToChineseIfNeeded(page) {
   }
 }
 
+async function handleSliderCaptcha(page) {
+  const maxRetries = 3;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await page.waitForTimeout(1000);
+      
+      const sliderPatterns = [
+        { container: 'div[class*="nc_wrapper"]', slider: '[class*="nc_iconfont"]' },
+        { container: 'div[id*="nc_wrapper"]', slider: '[class*="slider"]' },
+        { container: '.geetest_slider', slider: '.geetest_slider_button' },
+        { container: '[class*="captcha"]', slider: '[class*="slider"]' }
+      ];
+      
+      for (const pattern of sliderPatterns) {
+        const container = page.locator(pattern.container).first();
+        if (await container.count() > 0) {
+          console.log(`🔍 检测到滑动验证码容器 (尝试 ${attempt}/${maxRetries})`);
+          await saveScreenshot(page, `captcha_${attempt}.png`);
+          
+          const slider = container.locator(pattern.slider).first();
+          if (await slider.count() > 0) {
+            const sliderBox = await slider.boundingBox();
+            if (sliderBox) {
+              console.log('🖱️ 开始模拟滑动验证码');
+              
+              const startX = sliderBox.x + sliderBox.width / 2;
+              const startY = sliderBox.y + sliderBox.height / 2;
+              
+              const distance = Math.random() * 50 + 250;
+              
+              await page.mouse.move(startX, startY);
+              await page.waitForTimeout(100);
+              
+              await page.mouse.down();
+              await page.waitForTimeout(50);
+              
+              const steps = 20;
+              const moveDistance = distance / steps;
+              
+              for (let i = 1; i <= steps; i++) {
+                const progress = i / steps;
+                const easedDistance = moveDistance * (1 + Math.sin(progress * Math.PI) * 0.5);
+                const randomOffset = (Math.random() - 0.5) * 3;
+                await page.mouse.move(
+                  startX + easedDistance * i + randomOffset,
+                  startY + (Math.random() - 0.5) * 2
+                );
+                await page.waitForTimeout(30 + Math.random() * 30);
+              }
+              
+              await page.mouse.up();
+              await page.waitForTimeout(2000);
+              
+              console.log('✅ 滑动验证码已完成');
+              return true;
+            }
+          }
+        }
+      }
+      
+      return false;
+      
+    } catch (error) {
+      console.error(`❌ 滑动验证码处理失败 (尝试 ${attempt}/${maxRetries}): ${error.message}`);
+      if (attempt < maxRetries) {
+        await page.waitForTimeout(1000);
+      }
+    }
+  }
+  
+  console.log('⚠️ 滑动验证码处理失败，但继续执行');
+  return false;
+}
+
 async function saveScreenshot(page, name) {
   try {
     const screenshotPath = path.join(SCREENSHOT_DIR, name);
@@ -65,6 +140,8 @@ async function autoCheckin() {
     
     await saveScreenshot(page, '01_initial.png');
     
+    await handleSliderCaptcha(page);
+    
     console.log('🔐 开始登录流程');
     
     const passwordInput = page.locator('input[type="password"]').first();
@@ -99,6 +176,8 @@ async function autoCheckin() {
       await loginBtn.click({ timeout: 5000 });
     }
     
+    await handleSliderCaptcha(page);
+    
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {
       console.log('⚠️ 网络空闲等待超时，继续执行');
     });
@@ -107,11 +186,13 @@ async function autoCheckin() {
     
     await saveScreenshot(page, '03_after_login.png');
     
+    let checkinSuccess = false;
+    let alreadyCheckedIn = false;
+    const successKeywords = ['今日已签到', '已签到', '签到成功', 'success', '打卡成功', '签到奖励'];
+    const alreadySignedKeywords = ['今日已签到', '已签到', '已打卡'];
+    
     const pageText = await page.content();
     console.log('📄 页面内容预览:', pageText.substring(0, 500));
-    
-    let checkinSuccess = false;
-    const successKeywords = ['今日已签到', '已签到', '签到成功', 'success', '打卡成功', '签到奖励'];
     
     for (const keyword of successKeywords) {
       if (pageText.includes(keyword)) {
@@ -121,8 +202,16 @@ async function autoCheckin() {
       }
     }
     
-    if (checkinSuccess) {
-      console.log('✅ 签到成功！');
+    for (const keyword of alreadySignedKeywords) {
+      if (pageText.includes(keyword)) {
+        console.log(`ℹ️ 检测到已签到状态: "${keyword}"`);
+        alreadyCheckedIn = true;
+        break;
+      }
+    }
+    
+    if (checkinSuccess || alreadyCheckedIn) {
+      console.log('✅ 签到流程完成！');
       await saveScreenshot(page, '04_success.png');
       return true;
     }
@@ -157,9 +246,22 @@ async function autoCheckin() {
       }
     }
     
+    if (!checkinBtn) {
+      console.log('⚠️ 未找到签到按钮，尝试查找其他交互元素');
+      const possibleBtns = await page.locator('button, a, [role="button"]').all();
+      for (const btn of possibleBtns) {
+        const text = await btn.textContent();
+        if (text && text.trim().length > 0 && text.trim().length < 20) {
+          console.log(`  可疑元素: "${text.trim()}"`);
+        }
+      }
+    }
+    
     if (checkinBtn) {
       console.log('🖱️ 点击签到按钮');
       await checkinBtn.click({ timeout: 5000 });
+      
+      await handleSliderCaptcha(page);
       
       await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
         console.log('⚠️ 签到后网络空闲等待超时');
@@ -175,19 +277,31 @@ async function autoCheckin() {
           break;
         }
       }
+      
+      if (!checkinSuccess) {
+        for (const keyword of alreadySignedKeywords) {
+          if (finalText.includes(keyword)) {
+            console.log(`ℹ️ 签到后检测到已签到状态: "${keyword}"`);
+            alreadyCheckedIn = true;
+            break;
+          }
+        }
+      }
     } else {
-      console.log('⚠️ 未找到签到按钮，可能登录即完成签到');
+      console.error('❌ 未找到可点击的签到按钮');
+      await saveScreenshot(page, '04_no_button.png');
+      return false;
     }
     
-    if (checkinSuccess) {
+    if (checkinSuccess || alreadyCheckedIn) {
       console.log('✅ 签到成功！');
       await saveScreenshot(page, '04_success.png');
       return true;
     }
     
-    console.log('⚠️ 无法明确判断签到结果，但流程已执行完成');
-    await saveScreenshot(page, '04_final.png');
-    return true;
+    console.error('❌ 无法确认签到结果，可能执行失败');
+    await saveScreenshot(page, '04_failed.png');
+    return false;
     
   } catch (error) {
     console.error(`❌ 签到过程中发生错误: ${error.message}`);
