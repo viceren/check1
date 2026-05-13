@@ -1,0 +1,1143 @@
+<!DOCTYPE html><html lang="zh-CN" class="light"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a0b0f">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title data-i18n="checkin.title">晴辰云 - 每日签到</title>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/forge.css">
+<script src="/i18n.js"></script>
+<style>
+/* ════════════════════════════════════
+   Checkin Page — Obsidian v3 design
+   ══════════════════════════════════════ */
+body{overflow-x:hidden}
+
+/* Hero */
+.ci-hero{text-align:center;padding:48px 0 32px;position:relative}
+.ci-hero h1{font-size:48px;line-height:1.08;letter-spacing:-0.04em;font-weight:900;margin-bottom:14px}
+.ci-hero-desc{color:var(--sub);font-size:15px;max-width:520px;margin:0 auto 24px;line-height:1.7}
+.ci-hero-glow{position:absolute;width:min(600px,90vw);height:400px;border-radius:50%;background:radial-gradient(circle,rgba(251,191,36,0.08),rgba(13,148,136,0.05),transparent 70%);top:-60px;left:50%;transform:translateX(-50%);filter:blur(80px);pointer-events:none}
+
+/* Fire icon animation */
+.ci-fire{display:inline-block;font-size:42px;animation:fireFloat 2s ease-in-out infinite;margin-bottom:12px}
+@keyframes fireFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-8px) scale(1.1)}}
+
+/* Streak badge */
+.ci-streak-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:999px;background:linear-gradient(135deg,rgba(251,191,36,0.15),rgba(13,148,136,0.08));border:1px solid rgba(251,191,36,0.25);color:#fbbf24;font-size:14px;font-weight:800;margin-bottom:20px}
+
+/* Structure strip */
+.ci-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 24px}
+.ci-strip a{display:block;text-decoration:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg-card);transition:border-color .2s,transform .2s}
+.ci-strip a:hover{border-color:rgba(13,148,136,0.35);transform:translateY(-1px)}
+.ci-strip .k{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.ci-strip .v{margin-top:6px;font-size:13px;font-weight:700;color:var(--text)}
+
+/* Section divider */
+.ci-divider{height:1px;background:linear-gradient(90deg,transparent,rgba(251,191,36,0.2),rgba(13,148,136,0.1),transparent);margin:40px 0}
+
+/* Dual card layout */
+.ci-cards{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:32px}
+
+/* Card */
+.ci-card{padding:32px 28px;border-radius:22px;background:var(--bg-card);border:1px solid var(--border);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);position:relative;overflow:hidden;transition:border-color 0.3s}
+.ci-card:hover{border-color:rgba(13,148,136,0.25)}
+.ci-card-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:16px}
+.ci-card-tag.claim{background:rgba(52,211,153,0.12);color:#34d399;border:1px solid rgba(52,211,153,0.2)}
+.ci-card-tag.renew{background:rgba(13,148,136,0.12);color:#2dd4bf;border:1px solid rgba(13,148,136,0.2)}
+.ci-card h3{font-size:20px;font-weight:900;letter-spacing:-0.03em;margin-bottom:8px}
+.ci-card p{font-size:13px;color:var(--sub);line-height:1.7;margin-bottom:18px}
+.ci-card-glow{position:absolute;width:200px;height:200px;border-radius:50%;filter:blur(60px);pointer-events:none;opacity:0.5;top:-60px;right:-60px}
+.ci-card:first-child .ci-card-glow{background:rgba(52,211,153,0.08)}
+.ci-card:last-child .ci-card-glow{background:rgba(13,148,136,0.08)}
+
+/* Form elements */
+.ci-input{width:100%;padding:13px 16px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:12px;color:var(--text);font-size:14px;outline:none;transition:border-color 0.3s,box-shadow 0.3s;margin-bottom:12px;font-family:'JetBrains Mono',monospace}
+.ci-input:focus{border-color:#0d9488;box-shadow:0 0 0 3px rgba(13,148,136,0.12)}
+.ci-input::placeholder{color:var(--muted);font-family:'Inter',sans-serif}
+.light .ci-input{background:rgba(0,0,0,0.02)}
+
+.ci-captcha-row{display:flex;gap:10px;align-items:stretch;margin-bottom:14px}
+.ci-captcha-row .ci-input{flex:1;margin-bottom:0}
+.ci-captcha-q{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.22);border-radius:12px;padding:12px 16px;color:#fbbf24;font-size:15px;font-weight:700;white-space:nowrap;min-width:130px;text-align:center;cursor:pointer;transition:background 0.2s;user-select:none;display:flex;align-items:center;justify-content:center}
+.ci-captcha-q:hover{background:rgba(251,191,36,0.18)}
+
+.ci-btn{width:100%;padding:14px;border-radius:14px;border:none;cursor:pointer;font-size:15px;font-weight:700;color:#fff;position:relative;overflow:hidden;transition:all 0.3s cubic-bezier(0.16,1,0.3,1)}
+.ci-btn.claim{background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 6px 20px rgba(16,185,129,0.3)}
+.ci-btn.claim:hover{transform:translateY(-2px);box-shadow:0 10px 32px rgba(16,185,129,0.4)}
+.ci-btn.renew{background:linear-gradient(135deg,#0d9488,#0f766e);box-shadow:0 6px 20px rgba(13,148,136,0.3)}
+.ci-btn.renew:hover{transform:translateY(-2px);box-shadow:0 10px 32px rgba(13,148,136,0.4)}
+.ci-btn:disabled{opacity:0.5;cursor:not-allowed;transform:none !important;box-shadow:none !important}
+.ci-btn::after{content:'';position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent);transition:left 0.5s}
+.ci-btn:hover::after{left:120%}
+.ci-btn:disabled::after{display:none}
+
+/* Email code send button */
+.ci-code-btn{white-space:nowrap;padding:12px 18px;border-radius:12px;border:1px solid rgba(13,148,136,0.3);background:rgba(13,148,136,0.08);color:#2dd4bf;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.2s;min-width:110px;text-align:center}
+.ci-code-btn:hover{background:rgba(13,148,136,0.15);border-color:rgba(13,148,136,0.5)}
+.ci-code-btn:disabled{opacity:0.5;cursor:not-allowed}
+.light .ci-code-btn{background:rgba(124,58,237,0.06);border-color:rgba(124,58,237,0.25);color:#0f766e}
+
+/* Result display */
+.ci-result{margin-top:16px;padding:16px;border-radius:14px;font-size:13px;line-height:1.6;display:none}
+.ci-result.show{display:block}
+.ci-result.success{background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.2);color:#34d399}
+.ci-result.error{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);color:#f87171}
+.ci-result .ci-key{font-family:'JetBrains Mono',monospace;background:rgba(0,0,0,0.2);padding:8px 12px;border-radius:8px;display:block;margin:8px 0;word-break:break-all;font-size:12px;color:#fbbf24}
+
+/* ── Light mode overrides ── */
+.light .ci-card{background:#fff;border-color:#e8e5f0;box-shadow:0 2px 12px rgba(0,0,0,0.04)}
+.light .ci-card:hover{border-color:rgba(13,148,136,0.3)}
+.light .ci-card-tag.claim{background:rgba(16,185,129,0.08);color:#059669;border-color:rgba(16,185,129,0.2)}
+.light .ci-card-tag.renew{background:rgba(124,58,237,0.08);color:#0f766e;border-color:rgba(124,58,237,0.2)}
+.light .ci-input{background:#f8f7fc;border-color:#e2e0ee;color:#1a1a2e}
+.light .ci-input:focus{background:#fff;border-color:#0d9488}
+.light .ci-captcha-q{background:rgba(234,179,8,0.1);border-color:rgba(234,179,8,0.25);color:#a16207}
+.light .ci-captcha-q:hover{background:rgba(234,179,8,0.18)}
+.light .ci-result.success{background:rgba(16,185,129,0.06);border-color:rgba(16,185,129,0.25);color:#047857}
+.light .ci-result.error{background:rgba(239,68,68,0.06);border-color:rgba(239,68,68,0.2);color:#dc2626}
+.light .ci-result .ci-key{background:#1e1b4b;color:#fbbf24;border:1px solid #312e81}
+.light .ci-result .copy-btn{background:rgba(124,58,237,0.1);border-color:rgba(124,58,237,0.25);color:#6d28d9}
+.light .ci-result .copy-btn:hover{background:rgba(124,58,237,0.18)}
+.light .ci-btn.claim{box-shadow:0 6px 20px rgba(16,185,129,0.2)}
+.light .ci-btn.renew{box-shadow:0 6px 20px rgba(13,148,136,0.2)}
+.light .ci-streak-badge{background:rgba(234,179,8,0.1);border-color:rgba(234,179,8,0.25);color:#a16207}
+.light .ci-calendar-wrap{background:#fff;border-color:#e8e5f0;box-shadow:0 2px 12px rgba(0,0,0,0.04)}
+.light .ci-cal-day.checked{background:rgba(124,58,237,0.08);color:#0f766e;border-color:rgba(124,58,237,0.2)}
+.light .ci-cal-day.checked.milestone{background:rgba(234,179,8,0.1);color:#a16207;border-color:rgba(234,179,8,0.25)}
+.light .ci-cal-day.today{border-color:rgba(124,58,237,0.4);color:#1a1a2e}
+.light .ci-cal-day.today.checked{background:linear-gradient(135deg,rgba(124,58,237,0.12),rgba(6,182,212,0.06));border-color:#0f766e;color:#0f766e}
+.light .ci-rule.active{border-color:rgba(234,179,8,0.4);background:rgba(234,179,8,0.06)}
+.light .ci-rule.active .ci-rule-days{color:#a16207}
+.light .ci-section-label{background:rgba(234,179,8,0.08);border-color:rgba(234,179,8,0.18);color:#a16207}
+.light .ci-user-info{background:rgba(124,58,237,0.04);border-color:rgba(124,58,237,0.12)}
+
+/* Calendar section */
+.ci-calendar-wrap{padding:32px;border-radius:22px;background:var(--bg-card);border:1px solid var(--border);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);margin-bottom:32px}
+.ci-calendar-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.ci-calendar-title{font-size:18px;font-weight:800;letter-spacing:-0.02em}
+.ci-calendar-month{font-size:14px;color:var(--sub);font-weight:600}
+.ci-calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.ci-cal-head{text-align:center;font-size:11px;color:var(--muted);font-weight:600;padding:8px 0}
+.ci-cal-day{text-align:center;padding:10px 4px;border-radius:10px;font-size:13px;font-weight:600;color:var(--sub);position:relative;transition:all 0.2s}
+.ci-cal-day.empty{visibility:hidden}
+.ci-cal-day.checked{background:rgba(13,148,136,0.15);color:#2dd4bf;border:1px solid rgba(13,148,136,0.25)}
+.ci-cal-day.checked.milestone{background:linear-gradient(135deg,rgba(251,191,36,0.2),rgba(13,148,136,0.15));color:#fbbf24;border-color:rgba(251,191,36,0.3)}
+.ci-cal-day.today{border:2px solid rgba(13,148,136,0.4);color:var(--text);font-weight:800}
+.ci-cal-day.today.checked{background:linear-gradient(135deg,rgba(13,148,136,0.2),rgba(6,182,212,0.1));border-color:#0d9488;color:#fff}
+.ci-cal-day .ci-cal-dot{position:absolute;bottom:3px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:#0d9488}
+.ci-cal-day.milestone .ci-cal-dot{background:#fbbf24;width:5px;height:5px}
+
+/* Progress bar */
+.ci-progress-wrap{margin-top:20px;padding:20px;border-radius:16px;background:rgba(255,255,255,0.02);border:1px solid var(--border)}
+.light .ci-progress-wrap{background:rgba(255,255,255,0.6)}
+.ci-progress-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.ci-progress-label{font-size:13px;font-weight:700}
+.ci-progress-hint{font-size:12px;color:var(--sub)}
+.ci-progress-bar{height:8px;background:rgba(13,148,136,0.1);border-radius:99px;overflow:hidden}
+.ci-progress-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#0d9488,#2dd4bf,#fbbf24);transition:width 0.8s cubic-bezier(0.16,1,0.3,1)}
+
+/* Reward rules */
+.ci-rules{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}
+.ci-rule{text-align:center;padding:16px 10px;border-radius:14px;background:rgba(255,255,255,0.02);border:1px solid var(--border);transition:border-color 0.3s,transform 0.3s}
+.ci-rule:hover{border-color:rgba(13,148,136,0.25);transform:translateY(-2px)}
+.light .ci-rule{background:rgba(255,255,255,0.7)}
+.ci-rule-days{font-size:22px;font-weight:900;letter-spacing:-0.03em;margin-bottom:2px}
+.ci-rule-desc{font-size:11px;color:var(--sub);font-weight:500}
+.ci-rule.active{border-color:rgba(251,191,36,0.4);background:rgba(251,191,36,0.06)}
+.ci-rule.active .ci-rule-days{color:#fbbf24}
+
+/* Checkin success animation overlay */
+.ci-success-overlay{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;pointer-events:none;transition:opacity 0.3s}
+.ci-success-overlay.show{opacity:1;pointer-events:auto}
+.ci-success-box{text-align:center;padding:48px 40px;border-radius:28px;background:var(--bg);border:1px solid var(--border);box-shadow:0 40px 100px rgba(0,0,0,0.5);transform:scale(0.8);transition:transform 0.5s cubic-bezier(0.16,1,0.3,1);max-width:400px;width:90%}
+.ci-success-overlay.show .ci-success-box{transform:scale(1)}
+.light .ci-success-box{background:#fff}
+.ci-check-icon{width:80px;height:80px;border-radius:50%;background:linear-gradient(135deg,#10b981,#059669);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;animation:checkPop 0.6s cubic-bezier(0.16,1,0.3,1)}
+@keyframes checkPop{0%{transform:scale(0) rotate(-180deg);opacity:0}100%{transform:scale(1) rotate(0);opacity:1}}
+.ci-check-icon svg{width:40px;height:40px;color:#fff}
+.ci-success-title{font-size:24px;font-weight:900;letter-spacing:-0.03em;margin-bottom:8px}
+.ci-success-desc{font-size:14px;color:var(--sub);line-height:1.7;margin-bottom:6px}
+.ci-success-reward{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:99px;background:rgba(251,191,36,0.12);color:#fbbf24;font-size:16px;font-weight:800;margin:12px 0}
+.ci-success-streak{font-size:13px;color:var(--sub);margin-bottom:20px}
+
+/* Confetti */
+.ci-confetti{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1000;overflow:hidden}
+.ci-confetti span{position:absolute;top:-20px;width:10px;height:10px;border-radius:2px;animation:confettiFall linear forwards}
+@keyframes confettiFall{0%{transform:translateY(0) rotate(0deg);opacity:1}100%{transform:translateY(100vh) rotate(720deg);opacity:0}}
+
+/* Float reward text */
+.ci-float-reward{position:fixed;z-index:1001;font-size:28px;font-weight:900;color:#fbbf24;pointer-events:none;text-shadow:0 2px 12px rgba(251,191,36,0.5);animation:floatUp 2s ease-out forwards}
+@keyframes floatUp{0%{opacity:1;transform:translateY(0) scale(1)}50%{opacity:1;transform:translateY(-60px) scale(1.2)}100%{opacity:0;transform:translateY(-120px) scale(0.8)}}
+
+/* Logged in user info */
+.ci-user-info{display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:14px;background:rgba(13,148,136,0.06);border:1px solid rgba(13,148,136,0.15);margin-bottom:16px;font-size:13px}
+.ci-user-info .ci-user-key{font-family:'JetBrains Mono',monospace;color:var(--accent2);font-size:12px}
+.ci-user-info .ci-user-expiry{color:var(--sub)}
+
+/* Section */
+.ci-section{margin-bottom:32px}
+.ci-section-label{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.15);color:#fbbf24;font-size:12px;font-weight:700;letter-spacing:0.04em;margin-bottom:14px}
+.ci-section-title{font-size:24px;font-weight:900;letter-spacing:-0.03em;margin-bottom:10px}
+
+/* Responsive */
+@media(max-width:768px){
+  .ci-cards{grid-template-columns:1fr}
+  .ci-rules{grid-template-columns:repeat(2,1fr)}
+  .ci-hero{padding:32px 0 24px}
+  .ci-hero h1{font-size:36px}
+  .ci-card{padding:24px 20px;border-radius:18px}
+  .ci-calendar-wrap{padding:20px;border-radius:18px}
+  .ci-cal-day{padding:8px 2px;font-size:12px}
+  .ci-user-info{flex-wrap:wrap;gap:8px;padding:12px 14px}
+  .ci-success-box{padding:36px 28px}
+}
+@media(max-width:520px){
+  .ci-hero h1{font-size:28px}
+  .ci-hero-desc{font-size:13px}
+  .ci-strip{grid-template-columns:repeat(2,1fr)}
+  .ci-rules{grid-template-columns:1fr 1fr}
+  .ci-rule{padding:12px 8px}
+  .ci-rule-days{font-size:18px}
+  .ci-card{padding:20px 16px}
+  .ci-card h3{font-size:18px}
+  .ci-calendar-wrap{padding:16px 12px}
+  .ci-cal-day{padding:6px 1px;font-size:11px;border-radius:8px}
+  .ci-calendar{gap:4px}
+  .ci-captcha-row{flex-direction:column}
+  .ci-captcha-q{width:100%;min-width:0}
+  .ci-section-title{font-size:20px}
+  .ci-streak-badge{font-size:12px;padding:6px 14px}
+  .ci-success-box{padding:28px 20px;border-radius:20px}
+  .ci-success-title{font-size:20px}
+  .ci-check-icon{width:60px;height:60px}
+  .ci-check-icon svg{width:30px;height:30px}
+}
+</style>
+</head>
+<body>
+<div class="grain"></div>
+
+<nav class="n5">
+  <div class="n5-inner">
+    <a href="/" class="n5-brand">
+      <svg width="24" height="24" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="6" fill="currentColor"></rect><path d="M10 22V10h4l4 6 4-6h4v12h-4v-7l-4 5-4-5v7z" fill="var(--bg)"></path></svg>
+      <span class="brand-name">晴辰云</span>
+    </a>
+    <div class="n5-links">
+      <a href="/" data-i18n="nav.home">首页</a>
+      <a href="/activity.html" class="nav-activity" style="" data-i18n="nav.activity">活动</a>
+      <a href="/checkin" class="nav-checkin active" data-i18n="nav.checkin">签到</a>
+      <a href="/sales.html" class="nav-store" style="" data-i18n="nav.store">商城</a>
+      <a href="/api-doc.html" data-i18n="nav.docs">文档</a>
+      <a href="/status.html" data-i18n="nav.status">状态</a>
+      <a href="/user-help.html" data-i18n="nav.help">帮助</a>
+      <a href="https://qt.cool" target="_blank" rel="noopener noreferrer" data-i18n="nav.official">官网</a>
+    </div>
+    <div class="n5-actions">
+      <button class="n5-chip i18n-switch">EN</button><button onclick="toggleTheme()" class="n5-chip" id="themeBtn">深色</button>
+      <a href="/user" class="n5-chip n5-primary" title="进入用户门户登录或注册后再继续操作">登录 / 注册</a>
+      <button class="n5-burger" onclick="toggleMenu()">
+        <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+<div class="mob5" id="mobileMenu">
+  <a href="/" onclick="toggleMenu()">首页</a><a href="javascript:void(0)" class="i18n-switch">EN</a>
+  <a href="/activity.html" onclick="toggleMenu()" class="nav-activity" style="">活动</a>
+  <a href="/checkin" onclick="toggleMenu()" class="nav-checkin active">签到</a>
+  <a href="/sales.html" onclick="toggleMenu()" class="nav-store" style="">商城</a>
+  <a href="/api-doc.html" onclick="toggleMenu()">API 文档</a>
+  <a href="/status.html" onclick="toggleMenu()">状态</a>
+  <a href="/user-help.html" onclick="toggleMenu()">帮助</a>
+  <a href="https://qt.cool" target="_blank" rel="noopener noreferrer" onclick="toggleMenu()">官网</a>
+  <div style="margin-top:24px"><a href="/user" class="btn5 btn5-fill" style="width:100%;justify-content:center" title="进入用户门户登录或注册后再继续操作">登录 / 注册</a></div>
+</div><div id="publicNoticeBanner" style="max-width: 1100px; margin: 78px auto 0px; padding: 0px 20px; position: relative; z-index: 20;"><div style="padding:14px 16px;border-radius:14px;background:rgba(13,148,136,.06);border:1px solid rgba(13,148,136,.16);color:var(--text);font-size:12px;line-height:1.8;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)"><div class="site-internal-notice" data-role="internal-test-notice"><strong>内部测试平台</strong><span>本平台仅供开发测试与受控接入使用，公开站点不展示完整受控模型信息。所有模型仅供开发测试，用户需合规使用；AI 生成内容的合规风险由用户自行承担。如需正式接入，请通过 API 或受控客户端进行。</span></div><p><strong style="color:#ef4444">安全提醒</strong> — 请妥善保管 API Key，切勿在公开场合泄露。发现异常请立即重置密钥并联系管理员。</p>
+<p>每日 <a href="/checkin">签到</a> 可领取免费测试额度，连续签到额度递增。<a href="/user">邀请好友</a> 注册，可获得余额奖励。</p>
+<p>充值用户可解锁高级测试模型、无限速调用及优先响应，详情请前往 <a href="/user">用户门户</a> 了解。</p></div></div>
+
+<!-- 签到关闭提示 -->
+<div id="checkinDisabled" style="display:none;position:relative;z-index:1;min-height:80vh;align-items:center;justify-content:center;flex-direction:column;gap:20px;text-align:center;padding:40px 24px">
+  <svg width="48" height="48" fill="none" stroke="var(--sub)" stroke-width="1.5" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M3 3l18 18"></path></svg>
+  <h2 style="font-size:28px;font-weight:900;letter-spacing:-.03em;color:var(--text)">签到功能暂未开放</h2>
+  <p style="color:var(--sub);font-size:16px">管理员尚未启用签到功能，请稍后再来</p>
+  <a href="/" class="btn btn-primary" style="padding:12px 32px;font-size:14px;text-decoration:none;margin-top:8px;background:linear-gradient(135deg,#0f766e,#2dd4bf);color:#fff;border-radius:12px;font-weight:700">返回首页</a>
+</div>
+
+<div class="page-shell" id="checkinMain">
+
+  <!-- Hero -->
+  <div class="ci-hero">
+    <div class="ci-hero-glow"></div>
+    <div class="ci-fire"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c-4.97 0-9-2.69-9-6 0-4 3.5-7 5-9 0 3 2.5 5 5 5s4-1 5-3c.5 2 2 4 2 7 0 3.31-4.03 6-8 6z" fill="rgba(245,158,11,0.15)"></path></svg></div>
+    <h1><span class="grad-text" data-i18n="ci.title">每日签到</span></h1>
+    <p class="ci-hero-desc" data-i18n="ci.hero.desc">每天签到领取余额奖励，连续签到享倍率加成。支持领取新密钥或为已有密钥续期。</p>
+    <div class="ci-streak-badge" id="heroBadge" style="display:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 22c-4.97 0-9-2.69-9-6 0-4 3.5-7 5-9 0 3 2.5 5 5 5s4-1 5-3c.5 2 2 4 2 7 0 3.31-4.03 6-8 6z" fill="rgba(245,158,11,0.2)"></path></svg>
+      <span id="heroBadgeText">连续签到 0 天</span>
+    </div>
+  </div>
+
+  <div class="ci-strip">
+    <a href="#dualCards"><div class="k">01 - Action</div><div class="v">签到入口</div></a>
+    <a href="#calendarSection"><div class="k">02 - Calendar</div><div class="v">签到日历</div></a>
+    <a href="#rulesGrid"><div class="k">03 - Rules</div><div class="v">奖励规则</div></a>
+    <a href="/user"><div class="k">04 - Console</div><div class="v">用户控制台</div></a>
+  </div>
+
+  <!-- Dual cards: Claim + Renew -->
+  <div class="ci-cards" id="dualCards">
+
+    <!-- Card 1: Claim new key -->
+    <div class="ci-card" id="claimCard">
+      <div class="ci-card-glow"></div>
+      <div class="ci-card-tag claim"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 12 20 22 4 22 4 12"></polyline><rect x="2" y="7" width="20" height="5"></rect><line x1="12" y1="22" x2="12" y2="7"></line><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"></path><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"></path></svg> 新用户领取</div>
+      <h3 data-i18n="ci.card.claim.title">签到领取密钥</h3>
+      <p data-i18n="ci.card.claim.desc">首次签到自动创建 API 密钥，签到赠送余额，连续签到倍率加成！</p>
+      <!-- 邮箱验证区域 -->
+      <div id="claimEmailSection" style="display: block;">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input class="ci-input" id="claimEmail" placeholder="请输入邮箱地址" type="email" style="margin-bottom: 0px; flex: 1 1 0%;">
+          <button class="ci-code-btn" id="claimSendCodeBtn" onclick="sendClaimCode()">发送验证码</button>
+        </div>
+        <div class="ci-captcha-row" id="claimCaptchaRow" style="display: none;">
+          <div class="ci-captcha-q" id="claimCaptchaQ" onclick="refreshClaimCaptcha()" title="点击刷新">加载中...</div>
+          <input class="ci-input" id="claimCaptchaA" placeholder="输入答案" style="margin-bottom: 0px;">
+        </div>
+        <div id="tsClaim" style="display:none;margin-bottom:14px"></div>
+        <div id="gtClaim" style="display:none;margin-bottom:14px"></div>
+        <input class="ci-input" id="claimEmailCode" placeholder="输入邮箱验证码" style="margin-bottom: 8px;" onkeydown="if(event.key==='Enter')doClaim()">
+      </div>
+      <button class="ci-btn claim" id="claimBtn" onclick="doClaim()" data-i18n="ci.card.claim.btn">签到领取密钥</button>
+      <div class="ci-result" id="claimResult"></div>
+    </div>
+
+    <!-- Card 2: Login + Renew -->
+    <div class="ci-card" id="renewCard">
+      <div class="ci-card-glow"></div>
+      <div class="ci-card-tag renew"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> 已有密钥续期</div>
+      <h3 data-i18n="ci.card.renew.title">登录签到续期</h3>
+      <p data-i18n="ci.card.renew.desc">用你的 API 密钥登录，每天签到领取 $1 余额，连续签到享倍率加成！</p>
+
+      <!-- Login form (shown when not logged in) -->
+      <div id="renewLogin">
+        <input class="ci-input" id="renewKey" placeholder="输入你的 API Key (sk-...)" type="password" style="">
+        <button class="ci-btn renew" onclick="doRenewLogin()" data-i18n="ci.card.renew.login">登录</button>
+      </div>
+
+      <!-- Checkin form (shown when logged in) -->
+      <div id="renewCheckin" style="display:none">
+        <div class="ci-user-info">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+          <span class="ci-user-key" id="renewUserKey">sk-****</span>
+          <span class="ci-user-expiry" id="renewUserExpiry"></span>
+        </div>
+        <!-- 邮箱绑定状态 -->
+        <div id="renewEmailBound" style="display:none;margin-bottom:8px;padding:8px 12px;border-radius:8px;background:rgba(52,211,153,0.08);border:1px solid rgba(52,211,153,0.2);font-size:12px;color:#34d399">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg> 已绑定: <span id="renewBoundEmail"></span>
+        </div>
+        <!-- 邮箱绑定表单（首次签到需要） -->
+        <div id="renewEmailBind" style="display:none;margin-bottom:8px">
+          <div style="font-size:12px;color:#fbbf24;margin-bottom:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg> 首次签到需绑定邮箱</div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input class="ci-input" id="renewEmail" placeholder="请输入邮箱地址" type="email" style="margin-bottom: 0px; flex: 1 1 0%;">
+            <button class="ci-code-btn" id="renewSendCodeBtn" onclick="sendRenewCode()">发送验证码</button>
+          </div>
+          <div class="ci-captcha-row" id="renewCaptchaRow" style="display: none;">
+            <div class="ci-captcha-q" id="renewCaptchaQ" onclick="refreshRenewCaptcha()" title="点击刷新">加载中...</div>
+            <input class="ci-input" id="renewCaptchaA" placeholder="输入答案" style="margin-bottom: 0px;">
+          </div>
+          <div id="tsRenew" style="display:none;margin-bottom:14px"></div>
+          <div id="gtRenew" style="display:none;margin-bottom:14px"></div>
+          <input class="ci-input" id="renewEmailCode" placeholder="输入邮箱验证码" style="margin-bottom: 4px;" onkeydown="if(event.key==='Enter')doCheckin()">
+        </div>
+        <!-- 已绑邮箱用户的人机验证（防脚本刷签到） -->
+        <div id="renewBoundCaptcha" style="display:none;margin-bottom:8px">
+          <div class="ci-captcha-row" id="renewBoundCaptchaRow" style="display: none;">
+            <div class="ci-captcha-q" id="renewBoundCaptchaQ" onclick="refreshRenewBoundCaptcha()" title="点击刷新">加载中...</div>
+            <input class="ci-input" id="renewBoundCaptchaA" placeholder="输入答案" style="margin-bottom: 0px;" onkeydown="if(event.key==='Enter')doCheckin()">
+          </div>
+          <div id="tsRenewBound" style="display:none;margin-bottom:14px"></div>
+          <div id="gtRenewBound" style="display:none;margin-bottom:14px"></div>
+        </div>
+        <button class="ci-btn renew" id="checkinBtn" onclick="doCheckin()" data-i18n="ci.card.renew.checkin">签到续期</button>
+        <div style="text-align:center;margin-top:10px">
+          <a href="javascript:void(0)" onclick="doRenewLogout()" style="font-size:12px;color:var(--sub)">退出登录</a>
+        </div>
+      </div>
+
+      <div class="ci-result" id="renewResult"></div>
+    </div>
+  </div>
+
+  <!-- 找回密钥 -->
+  <div class="ci-card" style="margin-bottom:32px">
+    <div class="ci-card-glow" style="background:rgba(251,191,36,0.08)"></div>
+    <div class="ci-card-tag" style="background:rgba(251,191,36,0.12);color:#fbbf24;border:1px solid rgba(251,191,36,0.2)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg> 找回密钥</div>
+    <h3 data-i18n="ci.recover.title">忘记密钥？</h3>
+    <p data-i18n="ci.recover.desc">输入领取时绑定的邮箱，通过验证后即可查看关联的所有密钥。</p>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input class="ci-input" id="recoverEmail" placeholder="输入绑定的邮箱地址" type="email" style="margin-bottom: 0px; flex: 1 1 0%;">
+      <button class="ci-code-btn" id="recoverSendCodeBtn" onclick="sendRecoverCode()">发送验证码</button>
+    </div>
+    <input class="ci-input" id="recoverEmailCode" placeholder="输入邮箱验证码" style="margin-bottom: 8px;">
+    <div class="ci-captcha-row" id="recoverCaptchaRow" style="display: none;">
+      <div class="ci-captcha-q" id="recoverCaptchaQ" onclick="refreshRecoverCaptcha()" title="点击刷新">加载中...</div>
+      <input class="ci-input" id="recoverCaptchaA" placeholder="输入答案" style="margin-bottom: 0px;" onkeydown="if(event.key==='Enter')doRecover()">
+    </div>
+    <div id="tsRecover" style="display:none;margin-bottom:14px"></div>
+    <div id="gtRecover" style="display:none;margin-bottom:14px"></div>
+    <button class="ci-btn" style="background:linear-gradient(135deg,#f59e0b,#d97706);box-shadow:0 6px 20px rgba(245,158,11,0.3)" onclick="doRecover()">查找我的密钥</button>
+    <div class="ci-result" id="recoverResult"></div>
+  </div>
+
+  <!-- Calendar + Progress (shown when logged in) -->
+  <div id="calendarSection" style="display:none">
+    <div class="ci-calendar-wrap">
+      <div class="ci-calendar-header">
+        <div>
+          <div class="ci-calendar-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> 签到日历</div>
+          <div style="font-size:12px;color:var(--sub);margin-top:4px">
+            总签到 <strong id="totalCheckins">0</strong> 天 · 连续 <strong id="currentStreak">0</strong> 天
+          </div>
+        </div>
+        <div class="ci-calendar-month" id="calendarMonth"></div>
+      </div>
+      <div class="ci-calendar" id="calendarGrid"></div>
+
+      <!-- Progress to next milestone -->
+      <div class="ci-progress-wrap" id="progressWrap">
+        <div class="ci-progress-header">
+          <span class="ci-progress-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg> 下一里程碑</span>
+          <span class="ci-progress-hint" id="progressHint">连续 7 天 → 额外 +2 天</span>
+        </div>
+        <div class="ci-progress-bar">
+          <div class="ci-progress-fill" id="progressFill" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ci-divider"></div>
+
+  <!-- Reward Rules -->
+  <div class="ci-section">
+    <div class="ci-section-label" data-i18n="ci.rules.title">奖励规则</div>
+    <h2 class="ci-section-title" data-i18n="ci.rules.subtitle">签到奖励一览</h2>
+    <div class="ci-rules" id="rulesGrid">
+      <div class="ci-rule">
+        <div class="ci-rule-days" data-i18n="ci.rules.daily">每日</div>
+        <div class="ci-rule-desc" id="ruleDaily">+1 天</div>
+      </div>
+      <div class="ci-rule">
+        <div class="ci-rule-days">3天</div>
+        <div class="ci-rule-desc" id="rule3">额外 +1.5 天</div>
+      </div>
+      <div class="ci-rule">
+        <div class="ci-rule-days">7天</div>
+        <div class="ci-rule-desc" id="rule7">额外 +2 天</div>
+      </div>
+      <div class="ci-rule">
+        <div class="ci-rule-days">14天</div>
+        <div class="ci-rule-desc" id="rule14">额外 +3 天</div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:12px">
+      <div class="ci-rule" style="display:inline-block;min-width:160px">
+        <div class="ci-rule-days">30天</div>
+        <div class="ci-rule-desc" id="rule30">额外 +5 天</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">每日签到送余额，连续签到倍率加成 · <a href="/" style="color:var(--accent2)">返回首页</a> · <a href="/activity.html" class="nav-activity" style="color: var(--accent2);">活动公告</a></div>
+</div>
+
+<!-- Success overlay -->
+<div class="ci-success-overlay" id="successOverlay" onclick="closeSuccessOverlay()">
+  <div class="ci-success-box" onclick="event.stopPropagation()">
+    <div class="ci-check-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    </div>
+    <div class="ci-success-title" id="successTitle" data-i18n="ci.success.title">签到成功！</div>
+    <div class="ci-success-reward" id="successReward">+1 天续期</div>
+    <div class="ci-success-desc" id="successDesc"></div>
+    <div class="ci-success-streak" id="successStreak"></div>
+    <button class="btn btn-primary" onclick="closeSuccessOverlay()" style="padding:12px 32px;font-size:14px">好的</button>
+  </div>
+</div>
+
+<!-- Confetti container -->
+<div class="ci-confetti" id="confettiContainer"></div>
+
+<script src="/js/slider-captcha.js"></script>
+<script>
+// ===== Theme =====
+function getTheme(){return localStorage.getItem('cf-theme')||(matchMedia('(prefers-color-scheme:light)').matches?'light':'dark')}
+function applyTheme(t){
+  const theme=t||getTheme()
+  document.documentElement.classList.toggle('dark',theme==='dark')
+  document.documentElement.classList.toggle('light',theme==='light')
+  const b=document.getElementById('themeBtn')
+  if(b)b.textContent=theme==='dark'?'浅色':'深色'
+  localStorage.setItem('cf-theme',theme)
+}
+function toggleTheme(){applyTheme(getTheme()==='dark'?'light':'dark')}
+applyTheme()
+
+// ===== State =====
+let claimCaptcha={id:'',question:''}
+let renewCaptcha={id:'',question:''}
+let renewBoundCaptcha={id:'',question:''}
+let recoverCaptcha={id:'',question:''}
+let isLoggedIn=false
+let checkinStatus=null
+let rewardConfig=null
+let cfgRequireEmail=true
+
+// ===== Turnstile + GeeTest + Captcha =====
+let _ciTsMode=false,_ciTsSiteKey='',_ciTsLoaded=false
+let _ciTsWidgets={claim:null,renew:null,recover:null,renewBound:null}
+let _ciGtMode=false,_ciGtCaptchaId='',_ciGtLoaded=false
+let _ciGtObjs={claim:null,renew:null,recover:null,renewBound:null}
+
+function _ciLoadTsScript(cb){
+  if(_ciTsLoaded){cb();return}
+  const s=document.createElement('script');s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?onload=_ciOnTsLoad&render=explicit'
+  s.async=true;window._ciOnTsLoad=()=>{_ciTsLoaded=true;cb()};document.head.appendChild(s)
+}
+function _ciRenderTs(id){
+  const el=document.getElementById(id);if(!el||!window.turnstile)return null
+  el.innerHTML='';return turnstile.render('#'+id,{sitekey:_ciTsSiteKey,theme:getTheme()==='dark'?'dark':'light',size:'flexible'})
+}
+function _ciGetTsToken(name){return _ciTsMode&&window.turnstile?turnstile.getResponse(_ciTsWidgets[name])||'':''}
+function _ciResetTs(name){if(_ciTsMode&&window.turnstile&&_ciTsWidgets[name]!=null)turnstile.reset(_ciTsWidgets[name])}
+
+function _ciLoadGtScript(cb){
+  if(_ciGtLoaded){cb();return}
+  const s=document.createElement('script');s.src='https://static.geetest.com/v4/gt4.js'
+  s.onload=()=>{_ciGtLoaded=true;cb()};s.onerror=()=>{console.error('GeeTest SDK load failed')};document.head.appendChild(s)
+}
+function _ciInitGt(containerId,name){
+  if(!window.initGeetest4)return
+  initGeetest4({captchaId:_ciGtCaptchaId,product:'bind'},function(obj){
+    obj.appendTo('#'+containerId)
+    _ciGtObjs[name]=obj
+  })
+}
+
+function _ciHideAllCaptcha(){
+  ;['claimCaptchaRow','renewCaptchaRow','recoverCaptchaRow','renewBoundCaptchaRow'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none'})
+  ;['tsClaim','tsRenew','tsRecover','tsRenewBound'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none'})
+  ;['gtClaim','gtRenew','gtRecover','gtRenewBound'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none'})
+}
+
+async function fetchCaptcha(){
+  const r=await fetch('/auth/captcha?mode=slider',{cache:'no-store'})
+  const d=await r.json()
+  if(d.code===0){
+    if(d.data.slider){
+      _ciGtMode=false;_ciTsMode=false;_ciHideAllCaptcha()
+    }else if(d.data.geetest&&d.data.captchaId){
+      _ciGtMode=true;_ciGtCaptchaId=d.data.captchaId
+      _ciHideAllCaptcha()
+      ;['gtClaim','gtRenew','gtRecover','gtRenewBound'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=''})
+      _ciLoadGtScript(()=>{
+        if(!_ciGtObjs.claim)_ciInitGt('gtClaim','claim')
+        if(!_ciGtObjs.renew)_ciInitGt('gtRenew','renew')
+        if(!_ciGtObjs.recover)_ciInitGt('gtRecover','recover')
+        if(!_ciGtObjs.renewBound)_ciInitGt('gtRenewBound','renewBound')
+      })
+    }else if(d.data.turnstile&&d.data.siteKey){
+      _ciTsMode=true;_ciTsSiteKey=d.data.siteKey
+      _ciHideAllCaptcha()
+      ;['tsClaim','tsRenew','tsRecover','tsRenewBound'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=''})
+      _ciLoadTsScript(()=>{
+        _ciTsWidgets.claim=_ciRenderTs('tsClaim')
+        _ciTsWidgets.renew=_ciRenderTs('tsRenew')
+        _ciTsWidgets.recover=_ciRenderTs('tsRecover')
+        _ciTsWidgets.renewBound=_ciRenderTs('tsRenewBound')
+      })
+    }
+  }
+  return d
+}
+
+async function refreshClaimCaptcha(){
+  if(_ciGtMode){if(_ciGtObjs.claim)_ciGtObjs.claim.reset();return}
+  if(_ciTsMode){_ciResetTs('claim');return}
+  try{const d=await fetchCaptcha();if(d.code===0&&!_ciTsMode&&!_ciGtMode&&!d.data.slider){claimCaptcha=d.data;document.getElementById('claimCaptchaQ').textContent=d.data.question;document.getElementById('claimCaptchaA').value=''}}
+  catch(e){document.getElementById('claimCaptchaQ').textContent='加载失败，点击重试'}
+}
+async function refreshRenewCaptcha(){
+  if(_ciGtMode){if(_ciGtObjs.renew)_ciGtObjs.renew.reset();return}
+  if(_ciTsMode){_ciResetTs('renew');return}
+  try{const d=await fetchCaptcha();if(d.code===0&&!_ciTsMode&&!_ciGtMode&&!d.data.slider){renewCaptcha=d.data;document.getElementById('renewCaptchaQ').textContent=d.data.question;document.getElementById('renewCaptchaA').value=''}}
+  catch(e){document.getElementById('renewCaptchaQ').textContent='加载失败，点击重试'}
+}
+async function refreshRenewBoundCaptcha(){
+  if(_ciGtMode){if(_ciGtObjs.renewBound)_ciGtObjs.renewBound.reset();return}
+  if(_ciTsMode){_ciResetTs('renewBound');return}
+  try{const d=await fetchCaptcha();if(d.code===0&&!_ciTsMode&&!_ciGtMode&&!d.data.slider){renewBoundCaptcha=d.data;document.getElementById('renewBoundCaptchaQ').textContent=d.data.question;document.getElementById('renewBoundCaptchaA').value=''}}
+  catch(e){document.getElementById('renewBoundCaptchaQ').textContent='加载失败，点击重试'}
+}
+async function refreshRecoverCaptcha(){
+  if(_ciGtMode){if(_ciGtObjs.recover)_ciGtObjs.recover.reset();return}
+  if(_ciTsMode){_ciResetTs('recover');return}
+  try{const d=await fetchCaptcha();if(d.code===0&&!_ciTsMode&&!_ciGtMode&&!d.data.slider){recoverCaptcha=d.data;document.getElementById('recoverCaptchaQ').textContent=d.data.question;document.getElementById('recoverCaptchaA').value=''}}
+  catch(e){document.getElementById('recoverCaptchaQ').textContent='加载失败，点击重试'}
+}
+
+// ===== Email Code Sending =====
+let claimCodeTimer=null, renewCodeTimer=null
+
+async function sendEmailCode(email, btnId, resultId, captchaObj, captchaAnswerId, tsName){
+  const btn=document.getElementById(btnId)
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    showResult(resultId,'请输入有效的邮箱地址','error');return
+  }
+  const captcha=await runSliderCaptcha({title:'请先完成滑块验证'})
+  if(!captcha){showResult(resultId,'请完成人机验证','error');return}
+  const body={email,...captcha}
+  _doSendEmailCode(btn,body,btnId,resultId,captchaAnswerId,tsName)
+}
+async function _doSendEmailCode(btn,body,btnId,resultId,captchaAnswerId,tsName){
+  btn.disabled=true
+  let cd=60
+  btn.textContent=cd+'s'
+  const timer=setInterval(()=>{cd--;btn.textContent=cd+'s';if(cd<=0){clearInterval(timer);btn.disabled=false;btn.textContent='发送验证码'}},1000)
+  try{
+    const r=await fetch('/api/checkin/send-code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    const d=await r.json()
+    if(d.code===0){
+      showResult(resultId,'验证码已发送到邮箱，请查收','success')
+      if(captchaAnswerId==='claimCaptchaA')refreshClaimCaptcha();else if(captchaAnswerId==='recoverCaptchaA')refreshRecoverCaptcha();else refreshRenewCaptcha()
+    }else{
+      showResult(resultId,d.message||'发送失败','error')
+      clearInterval(timer);btn.disabled=false;btn.textContent='发送验证码'
+    }
+  }catch(e){showResult(resultId,'网络错误','error');clearInterval(timer);btn.disabled=false;btn.textContent='发送验证码'}
+}
+// legacy wrapper end
+
+function sendRecoverCode(){
+  const email=document.getElementById('recoverEmail').value.trim()
+  sendEmailCode(email,'recoverSendCodeBtn','recoverResult',recoverCaptcha,'recoverCaptchaA','recover')
+}
+
+async function doRecover(){
+  const email=document.getElementById('recoverEmail').value.trim()
+  const emailCode=document.getElementById('recoverEmailCode').value.trim()
+  if(!email){showResult('recoverResult','请输入邮箱地址','error');return}
+  if(!emailCode){showResult('recoverResult','请输入邮箱验证码','error');return}
+  const captcha=await runSliderCaptcha({title:'请先完成滑块验证'})
+  if(!captcha){showResult('recoverResult','请完成人机验证','error');return}
+  _doRecoverSubmit({email,emailCode,...captcha})
+}
+async function _doRecoverSubmit(body){
+  try{
+    const r=await fetch('/api/checkin/recover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    const d=await r.json()
+    if(d.code===0){
+      const keys=d.data.keys||[]
+      if(!keys.length){
+        showResult('recoverResult','该邮箱暂无关联密钥','error')
+      }else{
+        let html='<strong>找到 '+keys.length+' 个密钥：</strong>'
+        keys.forEach(k=>{
+          const statusText=k.status==='active'?'正常':'已禁用'
+          const statusColor=k.status==='active'?'#34d399':'#fc8181'
+          const expiry=k.expiresAt?(k.expiresAt.split(' ')[0]||k.expiresAt):'无到期时间'
+          html+=`<div style="margin-top:10px;padding:10px 14px;border-radius:10px;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.06)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <span style="font-size:11px;color:${statusColor};font-weight:600">${statusText}</span>
+              <span style="font-size:11px;color:var(--sub)">到期: ${expiry}</span>
+            </div>
+            <span class="ci-key" style="margin:0;display:block;font-size:11px">${k.key}</span>
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <button class="copy-btn" onclick="copyKey('${k.key}',this)" style="padding:6px 14px;font-size:11px">复制密钥</button>
+              <button class="copy-btn" onclick="autoLoginWithKey('${k.key}')" style="padding:6px 14px;font-size:11px;background:rgba(13,148,136,0.12);border-color:rgba(13,148,136,0.18);color:#2dd4bf">一键登录</button>
+            </div>
+          </div>`
+        })
+        showResult('recoverResult',html,'success')
+      }
+    }else{
+      showResult('recoverResult',d.message||'查找失败','error')
+    }
+  }catch(e){showResult('recoverResult','网络错误，请重试','error')}
+  refreshRecoverCaptcha()
+}
+
+function sendClaimCode(){
+  const email=document.getElementById('claimEmail').value.trim()
+  sendEmailCode(email,'claimSendCodeBtn','claimResult',claimCaptcha,'claimCaptchaA','claim')
+}
+function sendRenewCode(){
+  const email=document.getElementById('renewEmail').value.trim()
+  sendEmailCode(email,'renewSendCodeBtn','renewResult',renewCaptcha,'renewCaptchaA','renew')
+}
+
+// ===== Claim =====
+async function doClaim(){
+  const btn=document.getElementById('claimBtn')
+  // 验证邮箱和验证码（人机验证已在发验证码时完成）
+  const email=document.getElementById('claimEmail').value.trim()
+  const emailCode=document.getElementById('claimEmailCode').value.trim()
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showResult('claimResult','请先输入有效的邮箱地址','error');return}
+  if(!emailCode){showResult('claimResult','请先输入邮箱验证码','error');return}
+  const body={email,emailCode}
+  btn.disabled=true;btn.textContent='领取中...'
+  try{
+    const r=await fetch('/api/checkin/claim',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    const d=await r.json()
+    if(d.code===0){
+      const data=d.data
+      // 缓存密钥到 localStorage
+      try{const saved=JSON.parse(localStorage.getItem('cf-checkin-keys')||'[]');saved.unshift({key:data.key,expiresAt:data.expiresAt,claimedAt:new Date().toISOString()});localStorage.setItem('cf-checkin-keys',JSON.stringify(saved.slice(0,10)))}catch(_){}
+      showResult('claimResult',`<strong>★ ${data.message}</strong><span class="ci-key">${data.key}</span><div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="copy-btn" onclick="copyKey('${data.key}',this)" style="padding:8px 16px;font-size:12px">复制密钥</button><button class="copy-btn" onclick="autoLoginWithKey('${data.key}')" style="padding:8px 16px;font-size:12px;background:rgba(13,148,136,0.12);border-color:rgba(13,148,136,0.18);color:#2dd4bf">一键登录续期</button></div><div style="margin-top:6px;font-size:11px;color:var(--sub)">到期时间: ${data.expiresAt}</div>`,'success')
+      btn.disabled=true;btn.textContent='✓ 今日已领取'
+      showSuccessAnimation('密钥已领取！',`有效期 ${data.days} 天`,'每天来签到可续期哦')
+    }else{
+      showResult('claimResult',d.message,'error')
+      btn.disabled=false;btn.textContent='签到领取密钥'
+    }
+  }catch(e){showResult('claimResult','网络错误，请重试','error');btn.disabled=false;btn.textContent='签到领取密钥'}
+}
+// claim end
+
+// ===== Renew Login =====
+async function doRenewLogin(){
+  const key=document.getElementById('renewKey').value.trim()
+  if(!key){showResult('renewResult','请输入 API Key','error');return}
+  try{
+    const r=await fetch('/portal/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})})
+    const d=await r.json()
+    if(d.code===0){
+      isLoggedIn=true
+      document.getElementById('renewLogin').style.display='none'
+      document.getElementById('renewCheckin').style.display='block'
+      hideResult('renewResult')
+      await loadCheckinStatus()
+    }else{
+      showResult('renewResult',d.message||'登录失败','error')
+    }
+  }catch(e){showResult('renewResult','网络错误','error')}
+}
+
+async function doRenewLogout(){
+  try{await fetch('/portal/logout',{method:'POST'})}catch(_){}
+  isLoggedIn=false
+  document.getElementById('renewLogin').style.display='block'
+  document.getElementById('renewCheckin').style.display='none'
+  document.getElementById('calendarSection').style.display='none'
+  document.getElementById('heroBadge').style.display='none'
+  hideResult('renewResult')
+}
+
+// ===== Checkin =====
+async function doCheckin(){
+  const btn=document.getElementById('checkinBtn')
+  let body={}
+  const bindSection=document.getElementById('renewEmailBind')
+  const boundCaptchaSection=document.getElementById('renewBoundCaptcha')
+  if(bindSection&&bindSection.style.display!=='none'){
+    // 首次签到：邮箱绑定参数（人机验证已在发验证码时完成）
+    const email=document.getElementById('renewEmail').value.trim()
+    const emailCode=document.getElementById('renewEmailCode').value.trim()
+    if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showResult('renewResult','请先输入有效的邮箱地址并验证','error');return}
+    if(!emailCode){showResult('renewResult','请先输入邮箱验证码','error');return}
+    body.email=email;body.emailCode=emailCode
+  }else if(boundCaptchaSection&&boundCaptchaSection.style.display!=='none'){
+    const captcha=await runSliderCaptcha({title:'请先完成滑块验证'})
+    if(!captcha){showResult('renewResult','请完成人机验证','error');return}
+    Object.assign(body,captcha)
+  }
+  _doCheckin(btn,body)
+}
+async function _doCheckin(btn,body){
+  btn.disabled=true;btn.textContent='签到中...'
+  try{
+    const r=await fetch('/portal/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    const d=await r.json()
+    if(d.code===0){
+      const data=d.data
+      showResult('renewResult',data.message,'success')
+      let rewardText=data.message||'签到成功'
+      let streakText=`连续签到 ${data.streak} 天`
+      if(data.isMilestone){
+        streakText+=' ★ 达成里程碑！'
+      }
+      showSuccessAnimation('签到成功！',rewardText,streakText,data.isMilestone)
+      await loadCheckinStatus()
+    }else if(d.code===2&&d.needEmail){
+      // 需要绑定邮箱
+      document.getElementById('renewEmailBind').style.display='block'
+      document.getElementById('renewBoundCaptcha').style.display='none'
+      showResult('renewResult','首次签到需要绑定邮箱，请填写邮箱并验证','error')
+      btn.disabled=false;btn.textContent='签到续期'
+    }else{
+      showResult('renewResult',d.message,'error')
+      btn.disabled=false;btn.textContent='签到续期'
+      // 刷新验证码
+      refreshRenewBoundCaptcha()
+    }
+  }catch(e){showResult('renewResult','网络错误，请重试','error');btn.disabled=false;btn.textContent='签到续期'}
+}
+
+// ===== Load Status =====
+async function loadCheckinStatus(){
+  try{
+    const r=await fetch('/portal/checkin/status')
+    const d=await r.json()
+    if(d.code===0){
+      checkinStatus=d.data
+      rewardConfig=d.data.rewardConfig
+      renderCheckinUI()
+    }
+  }catch(e){}
+}
+
+function renderCheckinUI(){
+  if(!checkinStatus)return
+  const s=checkinStatus
+
+  // Show calendar section
+  document.getElementById('calendarSection').style.display='block'
+
+  // Hero badge
+  const badge=document.getElementById('heroBadge')
+  if(s.currentStreak>0||s.checkedInToday){
+    badge.style.display='inline-flex'
+    document.getElementById('heroBadgeText').textContent=`连续签到 ${s.currentStreak} 天`
+  }
+
+  // User info
+  if(s.maskedKey)document.getElementById('renewUserKey').textContent=s.maskedKey
+  document.getElementById('renewUserExpiry').textContent=s.expiresAt?`到期: ${s.expiresAt.split(' ')[0]}`:''
+
+  // Email binding status
+  if(s.emailBound){
+    document.getElementById('renewEmailBound').style.display='block'
+    document.getElementById('renewBoundEmail').textContent=s.maskedEmail||''
+    document.getElementById('renewEmailBind').style.display='none'
+    // 已绑邮箱：显示人机验证（防刷）
+    document.getElementById('renewBoundCaptcha').style.display=''
+    if(!s.checkedInToday) refreshRenewBoundCaptcha()
+  }else{
+    document.getElementById('renewEmailBound').style.display='none'
+    document.getElementById('renewEmailBind').style.display='block'
+    document.getElementById('renewBoundCaptcha').style.display='none'
+  }
+
+  // Disable checkin button if already checked in
+  const btn=document.getElementById('checkinBtn')
+  if(s.checkedInToday){
+    btn.disabled=true
+    btn.textContent='✓ 今日已签到'
+    btn.style.background='linear-gradient(135deg,#059669,#047857)'
+  }else{
+    btn.disabled=false
+    btn.textContent='签到续期'
+    btn.style.background=''
+  }
+
+  // Stats
+  document.getElementById('totalCheckins').textContent=s.totalCheckins||0
+  document.getElementById('currentStreak').textContent=s.currentStreak||0
+
+  // Calendar
+  renderCalendar(s.calendar||[])
+
+  // Progress
+  renderProgress(s)
+
+  // Reward rules
+  if(rewardConfig){
+    renderRules(rewardConfig)
+  }
+}
+
+function renderCalendar(records){
+  const now=new Date()
+  const year=now.getFullYear()
+  const month=now.getMonth()
+  const monthNames=['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月']
+  document.getElementById('calendarMonth').textContent=`${year}年 ${monthNames[month]}`
+
+  const firstDay=new Date(year,month,1).getDay()||7 // Monday=1
+  const daysInMonth=new Date(year,month+1,0).getDate()
+  const today=now.getDate()
+  const todayStr=`${year}-${String(month+1).padStart(2,'0')}-${String(today).padStart(2,'0')}`
+
+  // Build record map
+  const recordMap={}
+  ;(records||[]).forEach(r=>{
+    recordMap[r.date]={streak:r.streak,isMilestone:r.isMilestone}
+  })
+
+  const grid=document.getElementById('calendarGrid')
+  let html='<div class="ci-cal-head">一</div><div class="ci-cal-head">二</div><div class="ci-cal-head">三</div><div class="ci-cal-head">四</div><div class="ci-cal-head">五</div><div class="ci-cal-head">六</div><div class="ci-cal-head">日</div>'
+
+  // Empty cells for first week
+  const offset=(firstDay===0?6:firstDay-1)
+  for(let i=0;i<offset;i++){
+    html+='<div class="ci-cal-day empty"></div>'
+  }
+
+  for(let d=1;d<=daysInMonth;d++){
+    const dateStr=`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+    const rec=recordMap[dateStr]
+    let cls='ci-cal-day'
+    if(dateStr===todayStr)cls+=' today'
+    if(rec){
+      cls+=' checked'
+      if(rec.isMilestone)cls+=' milestone'
+    }
+    html+=`<div class="${cls}">${d}${rec?'<div class="ci-cal-dot"></div>':''}</div>`
+  }
+  grid.innerHTML=html
+}
+
+function renderProgress(s){
+  const streak=s.checkedInToday?s.currentStreak:(s.currentStreak||0)
+  const next=s.nextMilestone||7
+  const bonus=s.nextMilestoneBonus||0
+  const pct=Math.min(100,Math.round((streak/next)*100))
+
+  document.getElementById('progressFill').style.width=pct+'%'
+
+  const rt=rewardConfig?.type||'days'
+  let bonusText=''
+  if(rt==='days')bonusText=`额外 +${bonus} 天`
+  else if(rt==='balance')bonusText=`额外 +$${bonus}`
+  else if(rt==='tokens')bonusText=`额外 +${bonus} Token`
+  else bonusText=`额外 +${bonus}`
+  document.getElementById('progressHint').textContent=`连续 ${next} 天 → ${bonusText}（${streak}/${next}）`
+}
+
+function renderRules(cfg){
+  const type=cfg.type||'days'
+  const ms=cfg.milestones||{}
+  const mode=cfg.milestoneMode||'fixed'
+
+  let unitStr='天'
+  let dailyVal=cfg.dailyDays||'1'
+  if(type==='balance'){unitStr='USD';dailyVal=cfg.dailyBalance||'0.01'}
+  else if(type==='tokens'){unitStr='Token';dailyVal=cfg.dailyTokens||'10000'}
+  else if(type==='mixed'){unitStr='天+余额+Token';dailyVal=cfg.dailyDays||'1'}
+
+  document.getElementById('ruleDaily').textContent=type==='days'?`+${dailyVal} 天`:(type==='balance'?`+$${dailyVal}`:(type==='tokens'?`+${dailyVal} Token`:`+${dailyVal} 天(混合)`))
+
+  const modePrefix=mode==='multiply'?'x':'额外 +'
+  const modeSuffix=mode==='multiply'?'倍':(type==='days'?' 天':(type==='balance'?' USD':(type==='tokens'?' Token':'')))
+  document.getElementById('rule3').textContent=`${modePrefix}${ms['3']||1}${modeSuffix}`
+  document.getElementById('rule7').textContent=`${modePrefix}${ms['7']||2}${modeSuffix}`
+  document.getElementById('rule14').textContent=`${modePrefix}${ms['14']||3}${modeSuffix}`
+  document.getElementById('rule30').textContent=`${modePrefix}${ms['30']||5}${modeSuffix}`
+
+  // Highlight active milestone
+  const streak=checkinStatus?.currentStreak||0
+  const rules=document.querySelectorAll('.ci-rule')
+  const thresholds=[0,3,7,14]
+  rules.forEach((r,i)=>{
+    r.classList.remove('active')
+    if(i===0&&streak>=1)r.classList.add('active')
+    if(i>0&&streak>=thresholds[i])r.classList.add('active')
+  })
+}
+
+// ===== UI Helpers =====
+function showResult(id,msg,type){
+  const el=document.getElementById(id)
+  el.innerHTML=msg
+  el.className='ci-result show '+type
+}
+function hideResult(id){
+  const el=document.getElementById(id)
+  el.className='ci-result'
+  el.innerHTML=''
+}
+
+function copyKey(key,btn){
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(key)
+  }else{
+    const ta=document.createElement('textarea');ta.value=key;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta)
+  }
+  if(btn){const orig=btn.textContent;btn.textContent='已复制';btn.classList.add('done');setTimeout(()=>{btn.textContent=orig;btn.classList.remove('done')},1500)}
+}
+
+// ===== Success Animation =====
+function showSuccessAnimation(title,reward,desc,isMilestone){
+  document.getElementById('successTitle').textContent=title
+  document.getElementById('successReward').textContent=reward
+  document.getElementById('successDesc').textContent=desc||''
+  document.getElementById('successStreak').textContent=''
+
+  const overlay=document.getElementById('successOverlay')
+  overlay.classList.add('show')
+
+  // Confetti
+  if(isMilestone){
+    launchConfetti()
+  }
+
+  // Float reward text
+  const float=document.createElement('div')
+  float.className='ci-float-reward'
+  float.textContent=reward
+  float.style.left='50%'
+  float.style.top='40%'
+  float.style.transform='translateX(-50%)'
+  document.body.appendChild(float)
+  setTimeout(()=>float.remove(),2000)
+}
+
+function closeSuccessOverlay(){
+  document.getElementById('successOverlay').classList.remove('show')
+}
+
+function launchConfetti(){
+  const container=document.getElementById('confettiContainer')
+  const colors=['#0d9488','#2dd4bf','#fbbf24','#34d399','#22d3ee','#f87171','#fb923c']
+  for(let i=0;i<60;i++){
+    const span=document.createElement('span')
+    span.style.left=Math.random()*100+'%'
+    span.style.background=colors[Math.floor(Math.random()*colors.length)]
+    span.style.width=(6+Math.random()*8)+'px'
+    span.style.height=(6+Math.random()*8)+'px'
+    span.style.animationDuration=(1.5+Math.random()*2)+'s'
+    span.style.animationDelay=(Math.random()*0.5)+'s'
+    span.style.borderRadius=Math.random()>0.5?'50%':'2px'
+    container.appendChild(span)
+  }
+  setTimeout(()=>{container.innerHTML=''},4000)
+}
+
+// ===== Auto Login =====
+async function autoLoginWithKey(key){
+  try{
+    const r=await fetch('/portal/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})})
+    const d=await r.json()
+    if(d.code===0){
+      isLoggedIn=true
+      document.getElementById('renewLogin').style.display='none'
+      document.getElementById('renewCheckin').style.display='block'
+      hideResult('renewResult')
+      showResult('renewResult','已自动登录，明天记得来签到续期哦！','success')
+      await loadCheckinStatus()
+    }else{
+      showResult('renewResult',d.message||'自动登录失败','error')
+    }
+  }catch(e){showResult('renewResult','自动登录失败','error')}
+}
+
+// ===== Mobile Menu =====
+function toggleMenu(){
+  const m=document.getElementById('mobileMenu')
+  m.classList.toggle('open')
+}
+function renderPublicNotice(html){
+  if(!html)return
+  let wrap=document.getElementById('publicNoticeBanner')
+  if(!wrap){
+    wrap=document.createElement('div')
+    wrap.id='publicNoticeBanner'
+    wrap.style.cssText='max-width:1100px;margin:78px auto 0;padding:0 20px;position:relative;z-index:20'
+    wrap.innerHTML='<div style="padding:14px 16px;border-radius:14px;background:rgba(13,148,136,.06);border:1px solid rgba(13,148,136,.16);color:var(--text);font-size:12px;line-height:1.8;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)"></div>'
+    const anchor=document.getElementById('mobileMenu')||document.querySelector('nav')
+    if(anchor&&anchor.parentNode)anchor.insertAdjacentElement('afterend',wrap)
+  }
+  if(wrap.firstElementChild)wrap.firstElementChild.innerHTML=html
+}
+
+// ===== Init =====
+async function init(){
+  // Load config
+  try{
+    const r=await fetch('/api/checkin/config')
+    const d=await r.json()
+    if(d.code===0){
+      rewardConfig=d.data
+      cfgRequireEmail=true
+      renderRules(d.data)
+      // 邮箱验证区域（强制显示）
+      document.getElementById('claimEmailSection').style.display='block'
+      if(!d.data.enabled){
+        document.getElementById('checkinMain').style.display='none'
+        document.getElementById('checkinDisabled').style.display='flex'
+        // Site name
+        fetch('/api/site-info').then(r=>r.json()).then(si=>{
+          if(si.code===0&&si.data){
+            if(si.data.public_notice_html)renderPublicNotice(si.data.public_notice_html)
+            const n=si.data.site_name
+            if(n){document.title=n+' - 每日签到';document.querySelectorAll('.brand-name').forEach(el=>el.textContent=n)}
+            if(si.data.activity_enabled)document.querySelectorAll('.nav-activity').forEach(e=>e.style.display='')
+            if(si.data.store_enabled)document.querySelectorAll('.nav-store').forEach(e=>e.style.display='')
+          }
+        }).catch(()=>{})
+        return
+      }
+      if(!d.data.claimEnabled){
+        document.getElementById('claimBtn').disabled=true
+        document.getElementById('claimBtn').textContent='签到领取暂未开放'
+      }
+    }
+  }catch(e){}
+
+  // Load captcha (for send-code and recover)
+  refreshClaimCaptcha()
+  refreshRecoverCaptcha()
+
+  // 从 localStorage 恢复上次领取的密钥
+  try{
+    const saved=JSON.parse(localStorage.getItem('cf-checkin-keys')||'[]')
+    if(saved.length){
+      let html='<strong>上次领取的密钥：</strong>'
+      saved.forEach(k=>{
+        const expiry=k.expiresAt?(k.expiresAt.split(' ')[0]||k.expiresAt):'未知'
+        html+=`<span class="ci-key" style="margin:6px 0 2px;display:block;font-size:11px">${k.key}</span>`
+        html+=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><button class="copy-btn" onclick="copyKey('${k.key}',this)" style="padding:5px 12px;font-size:11px">复制</button><button class="copy-btn" onclick="autoLoginWithKey('${k.key}')" style="padding:5px 12px;font-size:11px;background:rgba(13,148,136,0.12);border-color:rgba(13,148,136,0.18);color:#2dd4bf">登录续期</button><span style="font-size:11px;color:var(--sub)">到期: ${expiry}</span></div>`
+      })
+      html+='<div style="font-size:11px;color:var(--sub);margin-top:4px">如需查看更多密钥，请使用下方「找回密钥」功能</div>'
+      showResult('claimResult',html,'success')
+    }
+  }catch(_){}
+
+  // Check portal session
+  try{
+    const r=await fetch('/portal/check')
+    if(r.ok){
+      const d=await r.json()
+      if(d.code===0){
+        isLoggedIn=true
+        document.getElementById('renewLogin').style.display='none'
+        document.getElementById('renewCheckin').style.display='block'
+        await loadCheckinStatus()
+      }
+    }
+  }catch(e){}
+
+  // Site name
+  fetch('/api/site-info').then(r=>r.json()).then(d=>{
+    if(d.code===0&&d.data){
+      if(d.data.public_notice_html)renderPublicNotice(d.data.public_notice_html)
+      const n=d.data.site_name
+      if(n){document.title=n+' - 每日签到';document.querySelectorAll('.brand-name').forEach(el=>el.textContent=n)}
+      if(d.data.activity_enabled)document.querySelectorAll('.nav-activity').forEach(e=>e.style.display='')
+      if(d.data.checkin_enabled)document.querySelectorAll('.nav-checkin').forEach(e=>e.style.display='')
+      if(d.data.store_enabled)document.querySelectorAll('.nav-store').forEach(e=>e.style.display='')
+    }
+  }).catch(()=>{})
+}
+
+init()
+</script>
+<script src="/ref-track.js"></script>
+<script src="/site-analytics.js"></script>
+
+
+</body></html>
