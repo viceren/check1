@@ -21,7 +21,7 @@ async function saveScreenshot(page, name) {
 
 async function injectSolver(page) {
   await page.evaluate(() => {
-    async function _loadImage(url) {
+    function _loadImage(url) {
       return new Promise(function(resolve, reject) {
         var img = new Image();
         img.crossOrigin = 'anonymous';
@@ -39,60 +39,90 @@ async function injectSolver(page) {
       });
     }
 
-    async function _findGap(bgUrl, width, pieceSize, gapY) {
-      var bgImg = await _loadImage(bgUrl);
+    function _findGap(bgUrl, width, pieceSize, gapY) {
+      return _loadImage(bgUrl).then(function(bgImg) {
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = bgImg.naturalHeight || 160;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(bgImg, 0, 0, width, canvas.height);
+        var imgData = ctx.getImageData(0, 0, width, canvas.height);
+        var d = imgData.data;
+        var h = canvas.height;
 
-      var canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = bgImg.naturalHeight || 160;
-      var ctx = canvas.getContext('2d');
-      ctx.drawImage(bgImg, 0, 0, width, canvas.height);
-      var imgData = ctx.getImageData(0, 0, width, canvas.height);
-      var d = imgData.data;
-      var h = canvas.height;
+        var startRow = Math.max(0, gapY - 5);
+        var endRow = Math.min(h, gapY + pieceSize + 5);
+        if (endRow - startRow < 10) { startRow = 0; endRow = h; }
+        var scanHeight = endRow - startRow;
 
-      var startRow = Math.max(0, gapY - 10);
-      var endRow = Math.min(h, gapY + pieceSize + 10);
-      var colSum = new Array(width);
-      for (var x = 0; x < width; x++) {
-        var sum = 0;
-        for (var row = startRow; row < endRow; row++) {
-          var idx = (row * width + x) * 4;
-          sum += d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114;
+        var edges = new Float64Array(width);
+        for (var x = 0; x < width; x++) {
+          var sum = 0;
+          for (var row = startRow; row < endRow; row++) {
+            for (var c = -1; c <= 1; c++) {
+              var px = Math.min(Math.max(x + c, 0), width - 1);
+              var idx = (row * width + px) * 4;
+              var gray = d[idx] * 0.299 + d[idx + 1] * 0.587 + d[idx + 2] * 0.114;
+              sum += gray * (c === 0 ? 0 : (c < 0 ? -1 : 1));
+            }
+          }
+          edges[x] = Math.abs(sum) / (scanHeight * 2);
         }
-        colSum[x] = sum / (endRow - startRow);
-      }
 
-      var colDiff = new Array(width - 1);
-      for (var x = 0; x < width - 1; x++) {
-        colDiff[x] = Math.abs(colSum[x] - colSum[x + 1]);
-      }
-
-      var peaks = [];
-      for (var x = 1; x < width - 2; x++) {
-        if (colDiff[x] > colDiff[x - 1] && colDiff[x] > colDiff[x + 1]) {
-          peaks.push({ x: x, value: colDiff[x] });
+        var smoothed = new Float64Array(width);
+        for (var x = 2; x < width - 2; x++) {
+          smoothed[x] = (edges[x - 2] + edges[x - 1] * 2 + edges[x] * 3 + edges[x + 1] * 2 + edges[x + 2]) / 9;
         }
-      }
-      peaks.sort(function(a, b) { return b.value - a.value; });
+        for (var x = 2; x < width - 2; x++) {
+          edges[x] = smoothed[x];
+        }
 
-      var LIMIT = Math.min(peaks.length, 20);
-      var pairFound = false;
-      for (var i = 0; i < LIMIT; i++) {
-        for (var j = i + 1; j < LIMIT; j++) {
-          var dist = Math.abs(peaks[i].x - peaks[j].x);
-          if (Math.abs(dist - pieceSize) <= 8) {
-            var left = Math.min(peaks[i].x, peaks[j].x);
-            var right = Math.max(peaks[i].x, peaks[j].x);
-            console.log('[CaptchaSolver] gap edges: left=' + left + ' right=' + right + ' dist=' + dist + ' ps=' + pieceSize);
-            pairFound = true;
+        var threshold = 0;
+        var count = 0;
+        for (var x = 0; x < width; x++) {
+          if (edges[x] > threshold) { threshold += edges[x]; count++; }
+        }
+        threshold = count > 0 ? (threshold / count) * 0.6 : 0;
+
+        var peaks = [];
+        for (var x = 2; x < width - 2; x++) {
+          if (edges[x] > threshold && edges[x] > edges[x - 1] && edges[x] > edges[x + 1]
+            && edges[x] >= edges[x - 2] && edges[x] >= edges[x + 2]) {
+            peaks.push({ x: x, value: edges[x] });
+          }
+        }
+        peaks.sort(function(a, b) { return b.value - a.value; });
+
+        console.log('[CaptchaSolver] width=' + width + ' pieceSize=' + pieceSize + ' peaks=' + peaks.length + ' threshold=' + threshold.toFixed(1));
+
+        var LIMIT = Math.min(peaks.length, 15);
+        for (var i = 0; i < LIMIT; i++) {
+          for (var j = i + 1; j < LIMIT; j++) {
+            var dist = Math.abs(peaks[i].x - peaks[j].x);
+            if (Math.abs(dist - pieceSize) <= 6) {
+              var left = Math.min(peaks[i].x, peaks[j].x);
+              var right = Math.max(peaks[i].x, peaks[j].x);
+              console.log('[CaptchaSolver] gap pair: left=' + left + ' right=' + right + ' dist=' + dist + ' ps=' + pieceSize);
+              return left;
+            }
+          }
+        }
+
+        if (peaks.length > 1) {
+          var d1 = Math.abs(peaks[0].x - peaks[1].x);
+          if (Math.abs(d1 - pieceSize) <= 10) {
+            var left = Math.min(peaks[0].x, peaks[1].x);
+            console.log('[CaptchaSolver] gap top2: left=' + left + ' right=' + Math.max(peaks[0].x, peaks[1].x) + ' dist=' + d1);
             return left;
           }
         }
-      }
 
-      if (peaks.length > 0) return peaks[0].x;
-      return 0;
+        if (peaks.length > 0) {
+          console.log('[CaptchaSolver] fallback peak: x=' + peaks[0].x + ' val=' + peaks[0].value.toFixed(1));
+          return peaks[0].x;
+        }
+        return Math.round(width * 0.3);
+      });
     }
 
     window._originalRunSliderCaptcha = window.runSliderCaptcha;
@@ -101,7 +131,13 @@ async function injectSolver(page) {
       try {
         var r = await fetch('/auth/captcha?mode=slider', { cache: 'no-store' });
         var d = await r.json();
-        if (d.code !== 0 || !d.data || !d.data.slider) throw new Error('captcha unavailable');
+        if (d.code !== 0 || !d.data || !d.data.slider) {
+          console.log('[CaptchaSolver] captcha unavailable, trying fallback');
+          var fr = await fetch('/auth/captcha?mode=slider&t=' + Date.now(), { cache: 'no-store' });
+          var fd = await fr.json();
+          if (fd.code !== 0 || !fd.data || !fd.data.slider) throw new Error('captcha unavailable');
+          d = fd;
+        }
         var data = d.data;
 
         var gapX = await _findGap(data.bg, data.width, data.pieceSize || 52, data.y || 0);
@@ -114,23 +150,38 @@ async function injectSolver(page) {
 
         for (var i = 0; i <= steps; i++) {
           var progress = i / steps;
-          var eased = progress < 0.8
-            ? progress * (1 + (Math.random() - 0.5) * 0.3)
-            : 1 - Math.pow(1 - progress, 3);
+          var eased;
+          if (progress < 0.3) {
+            eased = progress * 0.4 + (Math.random() - 0.5) * 0.05;
+          } else if (progress < 0.7) {
+            eased = 0.12 + (progress - 0.3) * 1.2 + (Math.random() - 0.5) * 0.08;
+          } else {
+            eased = 0.6 + (progress - 0.7) * 1.333 + (Math.random() - 0.5) * 0.03;
+          }
+          eased = Math.min(1, Math.max(0, eased));
           var x = Math.round(eased * gapX);
           var t = Math.round(progress * totalTime);
-          var y = Math.round(baseY + (Math.random() - 0.5) * 12);
+          var y = Math.round(baseY + (Math.random() - 0.5) * 10);
           points.push(t + ':' + x + ':' + y);
         }
-        points[points.length - 1] = totalTime + ':' + gapX + ':' + baseY;
 
-        return {
+        var overshoot = gapX + 2 + Math.floor(Math.random() * 4);
+        var undershoot = gapX;
+        var finalTime = totalTime + 80 + Math.floor(Math.random() * 60);
+        points[points.length - 1] = totalTime + ':' + overshoot + ':' + baseY;
+        points.push((totalTime + 40) + ':' + overshoot + ':' + baseY);
+        points.push((totalTime + 80) + ':' + undershoot + ':' + baseY);
+        points.push(finalTime + ':' + gapX + ':' + baseY);
+
+        var result = {
           sliderId: data.id,
           sliderX: gapX,
           sliderTrack: points.join(';')
         };
+        console.log('[CaptchaSolver] solved, id=' + data.id + ' x=' + gapX + ' steps=' + points.length);
+        return result;
       } catch (e) {
-        console.log('[CaptchaSolver] error: ' + e);
+        console.log('[CaptchaSolver] error: ' + e.message);
         return null;
       }
     };
@@ -163,7 +214,7 @@ async function autoCheckin() {
 
     console.log('访问: ' + CHECKIN_URL);
     await page.goto(CHECKIN_URL, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
     await saveScreenshot(page, '01_initial.png');
 
     await injectSolver(page);
@@ -171,15 +222,17 @@ async function autoCheckin() {
 
     console.log('🔐 登录中...');
     await page.locator('#renewKey').fill(CHECKIN_KEY);
+    await page.waitForTimeout(500);
     await saveScreenshot(page, '02_after_input.png');
 
     await page.locator('#renewLogin button.ci-btn.renew').click({ timeout: 5000 });
 
     try {
-      await page.locator('#renewCheckin').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('#renewCheckin').waitFor({ state: 'visible', timeout: 20000 });
       console.log('✅ 登录成功');
     } catch (e) {
-      console.error('登录超时');
+      var loginError = await page.locator('#renewResult').textContent().catch(function() { return ''; });
+      console.error('登录超时或失败: ' + loginError);
       await saveScreenshot(page, '03_login_failed.png');
       return false;
     }
@@ -187,9 +240,9 @@ async function autoCheckin() {
     await page.waitForTimeout(3000);
     await saveScreenshot(page, '03_after_login.png');
 
-    const checkinBtn = page.locator('#checkinBtn');
-    const btnText = await checkinBtn.textContent().catch(function() { return ''; });
-    const btnDisabled = await checkinBtn.isDisabled().catch(function() { return true; });
+    var checkinBtn = page.locator('#checkinBtn');
+    var btnText = await checkinBtn.textContent().catch(function() { return ''; });
+    var btnDisabled = await checkinBtn.isDisabled().catch(function() { return true; });
     console.log('签到按钮: "' + btnText + '" disabled=' + btnDisabled);
 
     if (btnText.indexOf('今日已签到') !== -1 || btnDisabled) {
@@ -198,24 +251,54 @@ async function autoCheckin() {
       return true;
     }
 
+    var bindSection = page.locator('#renewEmailBind');
+    var bindVisible = await bindSection.isVisible().catch(function() { return false; });
+    var boundCaptchaSection = page.locator('#renewBoundCaptcha');
+    var boundCaptchaVisible = await boundCaptchaSection.isVisible().catch(function() { return false; });
+
+    if (bindVisible) {
+      var checkinEmail = process.env.CHECKIN_EMAIL;
+      var emailCode = process.env.CHECKIN_EMAIL_CODE;
+      if (checkinEmail && emailCode) {
+        console.log('📧 检测到需要绑定邮箱，自动填写');
+        await page.locator('#renewEmail').fill(checkinEmail);
+        await page.locator('#renewSendCodeBtn').click();
+        console.log('等待验证码发送...');
+        await page.waitForTimeout(3000);
+        await page.locator('#renewEmailCode').fill(emailCode);
+        await page.waitForTimeout(500);
+      } else {
+        console.log('⚠️ 需要绑定邮箱，但未提供 CHECKIN_EMAIL/CHECKIN_EMAIL_CODE 环境变量');
+        console.log('尝试直接点击签到按钮（可能触发验证码流程）...');
+      }
+    } else if (boundCaptchaVisible) {
+      console.log('🔐 检测到已绑定邮箱，等待验证码准备...');
+      await page.waitForTimeout(2000);
+    }
+
     console.log('📝 开始签到...');
     await checkinBtn.click({ timeout: 5000 });
+
+    await page.waitForTimeout(2000);
 
     try {
       await page.waitForFunction(function() {
         var btn = document.getElementById('checkinBtn');
         if (!btn) return true;
-        return btn.textContent.indexOf('今日已签到') !== -1 || btn.disabled;
-      }, { timeout: 30000 });
+        var text = btn.textContent || '';
+        return text.indexOf('今日已签到') !== -1 || btn.disabled;
+      }, { timeout: 35000 });
+      console.log('签到按钮状态已更新');
     } catch (e) {
-      console.log('签到按钮状态未变化');
+      var btnStatus = await page.locator('#checkinBtn').textContent().catch(function() { return ''; });
+      console.log('签到按钮状态未变化: "' + btnStatus + '"');
     }
 
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2000);
     await saveScreenshot(page, '04_after_checkin.png');
 
-    const finalBtnText = await checkinBtn.textContent().catch(function() { return ''; });
-    const finalDisabled = await checkinBtn.isDisabled().catch(function() { return true; });
+    var finalBtnText = await page.locator('#checkinBtn').textContent().catch(function() { return ''; });
+    var finalDisabled = await page.locator('#checkinBtn').isDisabled().catch(function() { return true; });
     console.log('最终按钮: "' + finalBtnText + '" disabled=' + finalDisabled);
 
     if (finalBtnText.indexOf('今日已签到') !== -1 || finalDisabled) {
@@ -223,7 +306,7 @@ async function autoCheckin() {
       return true;
     }
 
-    const resultText = await page.locator('#renewResult').textContent().catch(function() { return ''; });
+    var resultText = await page.locator('#renewResult').textContent().catch(function() { return ''; });
     console.log('结果消息: ' + resultText);
 
     if (resultText.indexOf('成功') !== -1 || resultText.indexOf('已签到') !== -1) {
