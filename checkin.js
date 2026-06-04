@@ -21,68 +21,31 @@ async function saveScreenshot(page, name) {
   } catch (e) {}
 }
 
-// ===== 通过浏览器 fetch 图片（自动携带 cookie），返回 base64 Buffer =====
-async function fetchImageViaBrowser(page, bgUrl) {
-  var base64 = await page.evaluate(async function(url) {
-    try {
-      var r = await fetch(url, { cache: 'no-store' });
-      if (!r.ok) return null;
-      var blob = await r.blob();
-      var reader = new FileReader();
-      return new Promise(function(resolve) {
-        reader.onloadend = function() {
-          // "data:image/png;base64,xxxxx" -> 只取 base64 部分
-          var b64 = reader.result.split(',')[1];
-          resolve(b64 || null);
-        };
-        reader.onerror = function() { resolve(null); };
-        reader.readAsDataURL(blob);
-      });
-    } catch (e) {
-      return null;
-    }
-  }, bgUrl);
-
-  if (!base64) {
-    throw new Error('浏览器 fetch 图片失败: ' + bgUrl);
-  }
-  return Buffer.from(base64, 'base64');
-}
-
-// ===== Node.js 端 gap 检测 =====
-async function findGapInNode(page, captchaData) {
-  var bgUrl = captchaData.bg;
-  if (!bgUrl.startsWith('http')) {
-    bgUrl = 'https://gpt.qt.cool' + (bgUrl.startsWith('/') ? '' : '/') + bgUrl;
-  }
-
-  console.log('[GapSolver] 通过浏览器获取背景图: ' + bgUrl);
-  var imgBuffer = await fetchImageViaBrowser(page, bgUrl);
+// ===== Node.js 端 gap 检测（接收 base64 图片数据）=====
+async function findGapFromBase64(bgBase64, pieceSize, gapY) {
+  var imgBuffer = Buffer.from(bgBase64, 'base64');
   console.log('[GapSolver] 图片大小: ' + imgBuffer.length + ' bytes');
 
   var meta = await sharp(imgBuffer).metadata();
   var imgWidth = meta.width;
   var imgHeight = meta.height;
-  console.log('[GapSolver] 原始尺寸: ' + imgWidth + 'x' + imgHeight);
+  console.log('[GapSolver] 尺寸: ' + imgWidth + 'x' + imgHeight);
 
-  // 提取原始尺寸的灰度像素数据
-  var rawData = await sharp(imgBuffer)
-    .grayscale()
-    .raw()
-    .toBuffer();
+  if (!imgWidth || !imgHeight || meta.format === undefined) {
+    throw new Error('图片格式无效: ' + JSON.stringify(meta));
+  }
 
+  // 提取灰度像素数据
+  var rawData = await sharp(imgBuffer).grayscale().raw().toBuffer();
   var h = imgHeight;
 
-  var pieceSize = captchaData.pieceSize || 52;
-  var gapY = captchaData.y || 0;
-
-  // 确定扫描行范围（优先在 gap 区域扫描）
-  var startRow = Math.max(0, gapY - 8);
-  var endRow = Math.min(h, gapY + pieceSize + 8);
+  // 确定扫描行范围
+  var startRow = Math.max(0, (gapY || 0) - 8);
+  var endRow = Math.min(h, (gapY || 0) + pieceSize + 8);
   if (endRow - startRow < 16) { startRow = 0; endRow = h; }
   var scanHeight = endRow - startRow;
 
-  // 用原始像素宽度计算边缘
+  // Sobel 边缘检测
   var edges = new Float64Array(imgWidth);
   for (var x = 0; x < imgWidth; x++) {
     var sum = 0;
@@ -98,18 +61,15 @@ async function findGapInNode(page, captchaData) {
     edges[x] = Math.abs(sum) / (scanHeight * 2);
   }
 
-  // 平滑
+  // 5点平滑
   var smoothed = new Float64Array(imgWidth);
   for (var x = 2; x < imgWidth - 2; x++) {
     smoothed[x] = (edges[x - 2] + edges[x - 1] * 2 + edges[x] * 3 + edges[x + 1] * 2 + edges[x + 2]) / 9;
   }
-  for (var x = 2; x < imgWidth - 2; x++) {
-    edges[x] = smoothed[x];
-  }
+  for (var x = 2; x < imgWidth - 2; x++) edges[x] = smoothed[x];
 
   // 自适应阈值
-  var threshold = 0;
-  var count = 0;
+  var threshold = 0, count = 0;
   for (var x = 0; x < imgWidth; x++) {
     if (edges[x] > threshold) { threshold += edges[x]; count++; }
   }
@@ -126,8 +86,6 @@ async function findGapInNode(page, captchaData) {
   peaks.sort(function(a, b) { return b.value - a.value; });
 
   console.log('[GapSolver] width=' + imgWidth + ' pieceSize=' + pieceSize + ' peaks=' + peaks.length + ' threshold=' + threshold.toFixed(1));
-
-  // 打印 top peaks
   for (var i = 0; i < Math.min(peaks.length, 8); i++) {
     console.log('[GapSolver]   peak[' + i + ']: x=' + peaks[i].x + ' val=' + peaks[i].value.toFixed(2));
   }
@@ -139,13 +97,13 @@ async function findGapInNode(page, captchaData) {
       var dist = Math.abs(peaks[i].x - peaks[j].x);
       if (Math.abs(dist - pieceSize) <= 8) {
         var left = Math.min(peaks[i].x, peaks[j].x);
-        console.log('[GapSolver] ✓ gap pair detected: left=' + left + ' right=' + Math.max(peaks[i].x, peaks[j].x) + ' dist=' + dist);
+        console.log('[GapSolver] ✓ gap pair: left=' + left + ' right=' + Math.max(peaks[i].x, peaks[j].x) + ' dist=' + dist);
         return left;
       }
     }
   }
 
-  // 方法2：top2 峰值间距接近 pieceSize
+  // 方法2：top2 间距接近 pieceSize
   if (peaks.length > 1) {
     var d1 = Math.abs(peaks[0].x - peaks[1].x);
     if (Math.abs(d1 - pieceSize) <= 12) {
@@ -155,181 +113,42 @@ async function findGapInNode(page, captchaData) {
     }
   }
 
-  // 方法3：直接用最高峰
+  // 方法3：最高峰
   if (peaks.length > 0) {
-    console.log('[GapSolver] ⚠ fallback to top peak: x=' + peaks[0].x);
+    console.log('[GapSolver] ⚠ fallback top peak: x=' + peaks[0].x);
     return peaks[0].x;
   }
 
-  console.log('[GapSolver] ⚠ no peaks found, using 0.3*width');
+  console.log('[GapSolver] ⚠ no peaks, using 0.3*width');
   return Math.round(imgWidth * 0.3);
 }
 
 // ===== 生成更真实的滑动轨迹 =====
 function generateSliderTrack(gapX, baseY) {
-  var totalTime = 500 + Math.floor(Math.random() * 500);
-  var steps = 25 + Math.floor(Math.random() * 20);
+  var totalTime = 600 + Math.floor(Math.random() * 400);
+  var steps = 25 + Math.floor(Math.random() * 15);
   var points = [];
 
-  // 使用贝塞尔曲线模拟人类滑动
-  // 起始慢 → 中间加速 → 末端减速并微调
   for (var i = 0; i <= steps; i++) {
     var progress = i / steps;
-    // ease-out-cubic 变体，加入微小随机抖动
     var eased = 1 - Math.pow(1 - progress, 3);
-    eased = eased + (Math.random() - 0.5) * 0.02; // 微小抖动
+    eased = eased + (Math.random() - 0.5) * 0.015;
     eased = Math.min(1, Math.max(0, eased));
 
     var x = Math.round(eased * gapX);
     var t = Math.round(progress * totalTime);
-    // y 轴有轻微上下浮动，模拟手颤
-    var y = Math.round(baseY + Math.sin(progress * Math.PI * 2) * 3 + (Math.random() - 0.5) * 6);
+    var y = Math.round(baseY + Math.sin(progress * Math.PI * 2) * 2 + (Math.random() - 0.5) * 5);
     points.push(t + ':' + x + ':' + y);
   }
 
-  // 末端过冲+回弹，人类滑动特征
-  var overshotSteps = 2 + Math.floor(Math.random() * 3);
+  // 过冲 + 回弹
   var lastTime = totalTime;
-  var lastX = Math.round(gapX);
-
-  for (var k = 1; k <= overshotSteps; k++) {
-    lastTime += 30 + Math.floor(Math.random() * 40);
-    if (k === 1) {
-      // 过冲 2-5 像素
-      lastX = gapX + 2 + Math.floor(Math.random() * 4);
-    } else {
-      // 回弹到正确位置
-      lastX = gapX + Math.floor((Math.random() - 0.5) * 2);
-    }
-    points.push(lastTime + ':' + lastX + ':' + Math.round(baseY + (Math.random() - 0.5) * 3));
-  }
-
-  // 确保最后一个点最接近 gapX
-  lastTime += 20 + Math.floor(Math.random() * 30);
+  lastTime += 35 + Math.floor(Math.random() * 30);
+  points.push(lastTime + ':' + (gapX + 2 + Math.floor(Math.random() * 3)) + ':' + Math.round(baseY + (Math.random() - 0.5) * 2));
+  lastTime += 30 + Math.floor(Math.random() * 30);
   points.push(lastTime + ':' + gapX + ':' + baseY);
 
   return points.join(';');
-}
-
-// ===== 注入求解器到页面 =====
-async function injectSolver(page, captchaResults) {
-  await page.evaluate(function() {
-    // 保存原始函数引用
-    window._originalRunSliderCaptcha = window.runSliderCaptcha;
-
-    // 覆盖为延迟版本：等待外部设置结果
-    window._captchaResolve = null;
-    window._captchaPromise = null;
-
-    window.runSliderCaptcha = async function(opts) {
-      opts = opts || {};
-      console.log('[CaptchaSolver] runSliderCaptcha called, waiting for solution...');
-
-      // 创建一个新的Promise等待外部求解
-      window._captchaPromise = new Promise(function(resolve) {
-        window._captchaResolve = resolve;
-      });
-
-      var result = await window._captchaPromise;
-      console.log('[CaptchaSolver] got solution: ' + JSON.stringify(result));
-      return result;
-    };
-  });
-  console.log('🔧 滑块求解器已注入（等待模式）');
-}
-
-// ===== 在 Node 端求解验证码并通过 page.evaluate 传递给页面 =====
-async function solveAndDeliverCaptcha(page) {
-  // 等待页面开始请求验证码
-  console.log('[CaptchaSolver] 等待页面调用 runSliderCaptcha...');
-
-  // 轮询等待 _captchaPromise 被创建
-  var maxWait = 30000;
-  var startTime = Date.now();
-  while (Date.now() - startTime < maxWait) {
-    var hasPromise = await page.evaluate(function() {
-      return window._captchaPromise !== null;
-    });
-    if (hasPromise) break;
-    await page.waitForTimeout(200);
-  }
-
-  if (!(await page.evaluate(function() { return window._captchaPromise !== null; }))) {
-    console.log('[CaptchaSolver] 超时：页面未调用 runSliderCaptcha');
-    return false;
-  }
-
-  console.log('[CaptchaSolver] 页面已调用 runSliderCaptcha，开始求解...');
-
-  // 在浏览器中获取验证码数据
-  var captchaData = await page.evaluate(async function() {
-    try {
-      var r = await fetch('/auth/captcha?mode=slider', { cache: 'no-store' });
-      var d = await r.json();
-      if (d.code !== 0 || !d.data || !d.data.slider) {
-        // 重试一次带时间戳
-        var fr = await fetch('/auth/captcha?mode=slider&t=' + Date.now(), { cache: 'no-store' });
-        var fd = await fr.json();
-        if (fd.code !== 0 || !fd.data || !fd.data.slider) return null;
-        return fd.data;
-      }
-      return d.data;
-    } catch (e) {
-      console.log('[CaptchaSolver] fetch captcha error: ' + e.message);
-      return null;
-    }
-  });
-
-  if (!captchaData) {
-    console.log('[CaptchaSolver] 无法获取验证码数据');
-    await page.evaluate(function() {
-      if (window._captchaResolve) window._captchaResolve(null);
-    });
-    return false;
-  }
-
-  console.log('[CaptchaSolver] 验证码数据: id=' + captchaData.id + ' width=' + captchaData.width + ' pieceSize=' + (captchaData.pieceSize || 52) + ' y=' + (captchaData.y || 0));
-
-  // 在 Node 端计算 gap（通过浏览器 fetch 图片）
-  var gapX;
-  try {
-    gapX = await findGapInNode(page, captchaData);
-  } catch (e) {
-    console.log('[CaptchaSolver] 图片处理失败: ' + e.message);
-    await page.evaluate(function() {
-      if (window._captchaResolve) window._captchaResolve(null);
-    });
-    return false;
-  }
-
-  console.log('[CaptchaSolver] 计算得到 gapX=' + gapX);
-
-  // 生成轨迹
-  var track = generateSliderTrack(gapX, captchaData.y || 0);
-  var result = {
-    sliderId: captchaData.id,
-    sliderX: gapX,
-    sliderTrack: track
-  };
-
-  console.log('[CaptchaSolver] 求解结果: sliderId=' + result.sliderId + ' sliderX=' + result.sliderX + ' trackPoints=' + track.split(';').length);
-
-  // 传递结果给页面
-  var delivered = await page.evaluate(function(res) {
-    if (window._captchaResolve) {
-      window._captchaResolve(res);
-      return true;
-    }
-    return false;
-  }, result);
-
-  if (delivered) {
-    console.log('[CaptchaSolver] ✅ 结果已传递给页面');
-  } else {
-    console.log('[CaptchaSolver] ❌ 无法传递结果给页面');
-  }
-
-  return delivered;
 }
 
 // ===== 主签到逻辑 =====
@@ -362,11 +181,45 @@ async function autoCheckin() {
 
     const page = await context.newPage();
 
-    // 监听所有 console 消息
+    // 监听 console
     page.on('console', function(msg) {
       var t = msg.text();
       if (t.indexOf('[CaptchaSolver]') !== -1 || t.indexOf('[GapSolver]') !== -1) {
         console.log('  ' + t);
+      }
+    });
+
+    // ===== 核心：暴露 Node.js 函数给浏览器 =====
+    // 浏览器端调用 window.__solveCaptcha(captchaData) 时，
+    // 实际执行 Node.js 端的函数（图片处理、gap 计算、轨迹生成）
+    await page.exposeFunction('__solveCaptcha', async function(captchaData) {
+      try {
+        if (!captchaData || !captchaData.bgBase64) {
+          console.log('[CaptchaSolver] 未收到图片数据');
+          return null;
+        }
+
+        var pieceSize = captchaData.pieceSize || 52;
+        var gapY = captchaData.y || 0;
+        var id = captchaData.id;
+
+        console.log('[CaptchaSolver] 收到求解请求: id=' + id + ' pieceSize=' + pieceSize + ' y=' + gapY);
+
+        var gapX = await findGapFromBase64(captchaData.bgBase64, pieceSize, gapY);
+        console.log('[CaptchaSolver] 计算得到 gapX=' + gapX);
+
+        var track = generateSliderTrack(gapX, gapY);
+        var result = {
+          sliderId: id,
+          sliderX: gapX,
+          sliderTrack: track
+        };
+
+        console.log('[CaptchaSolver] 求解完成: sliderId=' + result.sliderId + ' sliderX=' + result.sliderX + ' points=' + track.split(';').length);
+        return result;
+      } catch (e) {
+        console.log('[CaptchaSolver] 求解异常: ' + e.message);
+        return null;
       }
     });
 
@@ -375,11 +228,87 @@ async function autoCheckin() {
     await page.waitForTimeout(2000);
     await saveScreenshot(page, '01_initial.png');
 
-    // 注入求解器
-    await injectSolver(page);
-    console.log('🔧 滑块求解器已注入');
+    // ===== 覆盖 runSliderCaptcha =====
+    // 浏览器内：fetch 验证码数据 + fetch 背景图转 base64 → 调用 Node.js 暴露的 __solveCaptcha
+    await page.evaluate(function() {
+      window._originalRunSliderCaptcha = window.runSliderCaptcha;
+      window.runSliderCaptcha = async function(opts) {
+        opts = opts || {};
+        console.log('[CaptchaSolver] runSliderCaptcha called');
 
-    // 等待页面完全加载后登录
+        try {
+          // 1) 获取验证码配置
+          var r = await fetch('/auth/captcha?mode=slider', { cache: 'no-store' });
+          var d = await r.json();
+          if (d.code !== 0 || !d.data || !d.data.slider) {
+            var r2 = await fetch('/auth/captcha?mode=slider&t=' + Date.now(), { cache: 'no-store' });
+            var d2 = await r2.json();
+            if (d2.code !== 0 || !d2.data || !d2.data.slider) {
+              console.log('[CaptchaSolver] 验证码不可用');
+              return null;
+            }
+            d = d2;
+          }
+          var data = d.data;
+
+          // 2) 获取背景图 base64 数据
+          //    服务器可能返回 data: URI（内联 base64）或 URL 路径
+          var bgValue = data.bg;
+          var base64 = null;
+
+          if (bgValue && bgValue.startsWith('data:')) {
+            // 直接从 data URI 中提取 base64 部分
+            var commaIdx = bgValue.indexOf(',');
+            if (commaIdx !== -1) {
+              base64 = bgValue.substring(commaIdx + 1) || null;
+            }
+            console.log('[CaptchaSolver] bg 是 data URI, base64长度=' + (base64 ? base64.length : 0));
+          } else {
+            // 旧模式：bg 是 URL 路径，需要 fetch 下载
+            var bgUrl = bgValue || '';
+            if (!bgUrl.startsWith('http')) {
+              bgUrl = window.location.origin + (bgUrl.startsWith('/') ? '' : '/') + bgUrl;
+            }
+            var imgR = await fetch(bgUrl, { cache: 'no-store' });
+            if (!imgR.ok) {
+              console.log('[CaptchaSolver] 背景图下载失败: ' + imgR.status);
+              return null;
+            }
+            var blob = await imgR.blob();
+            base64 = await new Promise(function(resolve) {
+              var reader = new FileReader();
+              reader.onloadend = function() { resolve(reader.result.split(',')[1] || null); };
+              reader.onerror = function() { resolve(null); };
+              reader.readAsDataURL(blob);
+            });
+            console.log('[CaptchaSolver] 背景图 fetch 成功, base64长度=' + (base64 ? base64.length : 0));
+          }
+
+          if (!base64) {
+            console.log('[CaptchaSolver] 背景图转 base64 失败');
+            return null;
+          }
+
+          // 3) 调用 Node.js 暴露的求解函数
+          var result = await window.__solveCaptcha({
+            id: data.id,
+            bgBase64: base64,
+            width: data.width,
+            pieceSize: data.pieceSize || 52,
+            y: data.y || 0
+          });
+
+          console.log('[CaptchaSolver] got solution: ' + JSON.stringify(result));
+          return result;
+        } catch (e) {
+          console.log('[CaptchaSolver] error: ' + e.message);
+          return null;
+        }
+      };
+    });
+    console.log('🔧 滑块求解器已注入（exposeFunction 模式）');
+
+    // 登录
     console.log('🔐 登录中...');
     await page.locator('#renewKey').fill(CHECKIN_KEY);
     await page.waitForTimeout(500);
@@ -400,19 +329,19 @@ async function autoCheckin() {
     await page.waitForTimeout(2000);
     await saveScreenshot(page, '03_after_login.png');
 
-    // 检查签到按钮状态
+    // 检查签到按钮
     var checkinBtn = page.locator('#checkinBtn');
     var btnText = await checkinBtn.textContent().catch(function() { return ''; });
     var btnDisabled = await checkinBtn.isDisabled().catch(function() { return true; });
     console.log('签到按钮: "' + btnText + '" disabled=' + btnDisabled);
 
-    if (btnText.indexOf('今日已签到') !== -1 || btnDisabled) {
+    if (btnText.indexOf('今日已签到') !== -1 || btnText.indexOf('Already') !== -1 || btnDisabled) {
       console.log('✅ 今日已签到');
       await saveScreenshot(page, '04_already_checked.png');
       return true;
     }
 
-    // 检查是否需要绑定邮箱
+    // 检查绑定邮箱
     var bindSection = page.locator('#renewEmailBind');
     var bindVisible = await bindSection.isVisible().catch(function() { return false; });
     var boundCaptchaSection = page.locator('#renewBoundCaptcha');
@@ -425,10 +354,7 @@ async function autoCheckin() {
         console.log('📧 检测到需要绑定邮箱，自动填写');
         await page.locator('#renewEmail').fill(checkinEmail);
         await page.locator('#renewSendCodeBtn').click();
-        console.log('等待验证码发送过程中的滑块验证...');
-        // 发送验证码也会触发滑块验证
-        await solveAndDeliverCaptcha(page);
-        await page.waitForTimeout(3000);
+        await page.waitForTimeout(5000);
         await page.locator('#renewEmailCode').fill(emailCode);
         await page.waitForTimeout(500);
       } else {
@@ -438,29 +364,19 @@ async function autoCheckin() {
       console.log('🔐 检测到已绑定邮箱，签到需要滑块验证');
     }
 
-    // 点击签到按钮后立即求解验证码
-    console.log('📝 开始签到...');
-    var clickPromise = checkinBtn.click({ timeout: 5000 });
-
-    // 同时启动验证码求解
-    var solvePromise = solveAndDeliverCaptcha(page);
-
-    // 等待两者完成
-    await Promise.all([clickPromise, solvePromise]);
-
-    // 等待签到结果
-    await page.waitForTimeout(3000);
-
-    // 检查签到是否成功，如果失败则重试几次
+    // 签到 + 重试
     var success = false;
     for (var attempt = 1; attempt <= MAX_CAPTCHA_RETRIES; attempt++) {
+      console.log('📝 签到尝试 ' + attempt + '/' + MAX_CAPTCHA_RETRIES);
+      await checkinBtn.click({ timeout: 5000 });
+      await page.waitForTimeout(4000);
       await saveScreenshot(page, '04_after_checkin_attempt' + attempt + '.png');
 
       var finalBtnText = await page.locator('#checkinBtn').textContent().catch(function() { return ''; });
       var finalDisabled = await page.locator('#checkinBtn').isDisabled().catch(function() { return true; });
-      console.log('尝试 ' + attempt + ': 按钮="' + finalBtnText + '" disabled=' + finalDisabled);
+      console.log('按钮状态: "' + finalBtnText + '" disabled=' + finalDisabled);
 
-      if (finalBtnText.indexOf('今日已签到') !== -1 || finalDisabled) {
+      if (finalBtnText.indexOf('今日已签到') !== -1 || finalBtnText.indexOf('Already') !== -1 || finalDisabled) {
         console.log('✅ 签到成功');
         success = true;
         break;
@@ -469,35 +385,24 @@ async function autoCheckin() {
       var resultText = await page.locator('#renewResult').textContent().catch(function() { return ''; });
       console.log('结果消息: ' + resultText);
 
-      if (resultText.indexOf('成功') !== -1 || resultText.indexOf('已签到') !== -1) {
+      if (resultText.indexOf('成功') !== -1 || resultText.indexOf('success') !== -1 ||
+          resultText.indexOf('已签到') !== -1 || resultText.indexOf('Already') !== -1) {
         console.log('✅ 签到成功');
         success = true;
         break;
       }
 
-      if (resultText.indexOf('人机验证') !== -1 || resultText.indexOf('请完成') !== -1) {
-        if (attempt < MAX_CAPTCHA_RETRIES) {
-          console.log('❌ 验证码求解失败，重试 ' + (attempt + 1) + '/' + MAX_CAPTCHA_RETRIES);
+      var needRetry = resultText.indexOf('人机验证') !== -1 || resultText.indexOf('human') !== -1 ||
+                      resultText.indexOf('请完成') !== -1 || resultText.indexOf('Complete') !== -1 ||
+                      resultText.indexOf('验证') !== -1 || resultText.indexOf('verif') !== -1;
 
-          // 重置验证码 resolver
-          await page.evaluate(function() {
-            window._captchaPromise = null;
-            window._captchaResolve = null;
-          });
-
-          // 再次点击签到按钮
-          var retryClickPromise = checkinBtn.click({ timeout: 5000 }).catch(function(e) {
-            console.log('重试点击失败: ' + e.message);
-          });
-          var retrySolvePromise = solveAndDeliverCaptcha(page);
-
-          await Promise.all([retryClickPromise, retrySolvePromise]);
-          await page.waitForTimeout(3000);
-        } else {
-          console.log('❌ 验证码求解失败，已达最大重试次数');
-        }
+      if (needRetry && attempt < MAX_CAPTCHA_RETRIES) {
+        console.log('❌ 验证码失败，将重试...');
+        await page.waitForTimeout(1000);
+      } else if (needRetry) {
+        console.log('❌ 验证码求解失败，已达最大重试次数');
       } else {
-        // 既不是验证码问题也不是成功，可能是其他错误
+        console.log('❌ 其他错误，停止重试');
         break;
       }
     }
