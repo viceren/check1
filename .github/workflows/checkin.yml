@@ -33,25 +33,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22'
           cache: 'npm'
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-${{ hashFiles('package.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-chromium-
 
       - name: Get dependencies
         run: npm install
 
-      - name: Install Playwright dependencies
-        run: npx playwright install-deps chromium || true
-
       - name: Install Playwright browsers
-        run: npx playwright install chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify Playwright installation
+        run: npx playwright --version
 
       - name: Run checkin script
         env:
