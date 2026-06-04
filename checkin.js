@@ -2,8 +2,6 @@ require('dotenv').config();
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const http = require('http');
 const sharp = require('sharp');
 
 const CHECKIN_KEY = process.env.CHECKIN_KEY;
@@ -23,25 +21,43 @@ async function saveScreenshot(page, name) {
   } catch (e) {}
 }
 
-// ===== Node.js 端图片处理 =====
-function downloadImage(url) {
-  return new Promise(function(resolve, reject) {
-    var client = url.startsWith('https') ? https : http;
-    client.get(url, function(res) {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return downloadImage(res.headers.location).then(resolve).catch(reject);
-      }
-      var chunks = [];
-      res.on('data', function(chunk) { chunks.push(chunk); });
-      res.on('end', function() { resolve(Buffer.concat(chunks)); });
-      res.on('error', reject);
-    }).on('error', reject);
-  });
+// ===== 通过浏览器 fetch 图片（自动携带 cookie），返回 base64 Buffer =====
+async function fetchImageViaBrowser(page, bgUrl) {
+  var base64 = await page.evaluate(async function(url) {
+    try {
+      var r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) return null;
+      var blob = await r.blob();
+      var reader = new FileReader();
+      return new Promise(function(resolve) {
+        reader.onloadend = function() {
+          // "data:image/png;base64,xxxxx" -> 只取 base64 部分
+          var b64 = reader.result.split(',')[1];
+          resolve(b64 || null);
+        };
+        reader.onerror = function() { resolve(null); };
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      return null;
+    }
+  }, bgUrl);
+
+  if (!base64) {
+    throw new Error('浏览器 fetch 图片失败: ' + bgUrl);
+  }
+  return Buffer.from(base64, 'base64');
 }
 
-async function findGapInNode(bgImageUrl, width, pieceSize, gapY) {
-  console.log('[GapSolver] 下载背景图: ' + bgImageUrl);
-  var imgBuffer = await downloadImage(bgImageUrl);
+// ===== Node.js 端 gap 检测 =====
+async function findGapInNode(page, captchaData) {
+  var bgUrl = captchaData.bg;
+  if (!bgUrl.startsWith('http')) {
+    bgUrl = 'https://gpt.qt.cool' + (bgUrl.startsWith('/') ? '' : '/') + bgUrl;
+  }
+
+  console.log('[GapSolver] 通过浏览器获取背景图: ' + bgUrl);
+  var imgBuffer = await fetchImageViaBrowser(page, bgUrl);
   console.log('[GapSolver] 图片大小: ' + imgBuffer.length + ' bytes');
 
   var meta = await sharp(imgBuffer).metadata();
@@ -57,9 +73,12 @@ async function findGapInNode(bgImageUrl, width, pieceSize, gapY) {
 
   var h = imgHeight;
 
+  var pieceSize = captchaData.pieceSize || 52;
+  var gapY = captchaData.y || 0;
+
   // 确定扫描行范围（优先在 gap 区域扫描）
-  var startRow = Math.max(0, (gapY || 0) - 8);
-  var endRow = Math.min(h, (gapY || 0) + pieceSize + 8);
+  var startRow = Math.max(0, gapY - 8);
+  var endRow = Math.min(h, gapY + pieceSize + 8);
   if (endRow - startRow < 16) { startRow = 0; endRow = h; }
   var scanHeight = endRow - startRow;
 
@@ -271,15 +290,10 @@ async function solveAndDeliverCaptcha(page) {
 
   console.log('[CaptchaSolver] 验证码数据: id=' + captchaData.id + ' width=' + captchaData.width + ' pieceSize=' + (captchaData.pieceSize || 52) + ' y=' + (captchaData.y || 0));
 
-  // 在 Node 端计算 gap
-  var bgUrl = captchaData.bg;
-  if (!bgUrl.startsWith('http')) {
-    bgUrl = 'https://gpt.qt.cool' + (bgUrl.startsWith('/') ? '' : '/') + bgUrl;
-  }
-
+  // 在 Node 端计算 gap（通过浏览器 fetch 图片）
   var gapX;
   try {
-    gapX = await findGapInNode(bgUrl, captchaData.width, captchaData.pieceSize || 52, captchaData.y || 0);
+    gapX = await findGapInNode(page, captchaData);
   } catch (e) {
     console.log('[CaptchaSolver] 图片处理失败: ' + e.message);
     await page.evaluate(function() {
