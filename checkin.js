@@ -21,7 +21,9 @@ const _logStream = fs.createWriteStream(LOG_FILE, { flags: 'w' });
 const _origLog = console.log.bind(console);
 const _origErr = console.error.bind(console);
 function _fmt(args) {
-  return args.map(function (a) { return typeof a === 'string' ? a : (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ');
+  // arguments 是类数组对象，没有 .map，必须先转成真数组
+  var arr = Array.prototype.slice.call(args);
+  return arr.map(function (a) { return typeof a === 'string' ? a : (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ');
 }
 console.log = function () { var m = _fmt(arguments); try { _logStream.write(m + '\n'); } catch (e) {} _origLog(m); };
 console.error = function () { var m = _fmt(arguments); try { _logStream.write(m + '\n'); } catch (e) {} _origErr(m); };
@@ -85,6 +87,57 @@ async function findGapByTemplateMatch(bgBase64, pieceBase64, pieceSize, y, width
     return null;
   }
   return best.x;
+}
+
+// ===== 亮度法求解缺口（最可靠）：在 y 带 [y, y+pieceSize] 内找最亮连续区，左边缘 = sliderX =====
+// 该 captcha 的缺口是 bg 上的亮色矩形补丁，列均值在缺口处显著高于背景基线。
+async function findGapByBrightness(bgBase64, pieceSize, gapY, width) {
+  var buf = Buffer.from(bgBase64, 'base64');
+  var meta = await sharp(buf).metadata();
+  var w = meta.width, h = meta.height;
+  if (!w || !h) return null;
+  var raw = await sharp(buf).raw().toBuffer(); // RGB
+  var ps = pieceSize || 52;
+  var y0 = Math.max(0, gapY || 0);
+  var y1 = Math.min(h, y0 + ps);
+  if (y1 <= y0) return null;
+
+  // 每列在 y 带内的平均灰度
+  var colMean = new Float64Array(w);
+  for (var x = 0; x < w; x++) {
+    var s = 0, n = 0;
+    for (var row = y0; row < y1; row++) {
+      var i = (row * w + x) * 3;
+      s += (raw[i] + raw[i + 1] + raw[i + 2]) / 3;
+      n++;
+    }
+    colMean[x] = n > 0 ? s / n : 0;
+  }
+  // 基线（中位数）与最亮列
+  var sorted = Array.from(colMean).sort(function (a, b) { return a - b; });
+  var median = sorted[Math.floor(sorted.length / 2)] || 0;
+  var peak = -Infinity, peakX = 0;
+  for (var x = 0; x < w; x++) {
+    if (colMean[x] > peak) { peak = colMean[x]; peakX = x; }
+  }
+  var range = peak - median;
+  if (range < 20) {
+    console.log('[GapSolver] 亮度法置信度低 (range=' + range.toFixed(1) + '), 回退');
+    return null;
+  }
+  // 从 peakX 向左找连续亮区左边缘（threshold = median + 0.3*range）
+  var th = median + range * 0.3;
+  var leftEdge = peakX;
+  for (var x = peakX; x >= 0; x--) {
+    if (colMean[x] < th) { leftEdge = x + 1; break; }
+    leftEdge = x;
+  }
+  // 约束：缺口不能超出最大可拖动范围
+  var maxX = Math.max(0, (width || w) - ps);
+  if (leftEdge > maxX) leftEdge = maxX;
+  if (leftEdge < 0) leftEdge = 0;
+  console.log('[GapSolver] 亮度法 peakX=' + peakX + ' peak=' + peak.toFixed(1) + ' median=' + median.toFixed(1) + ' leftEdge=' + leftEdge + ' maxX=' + maxX);
+  return leftEdge;
 }
 
 // ===== Node.js 端 gap 检测（边缘检测兜底，仅在无 piece 时使用）=====
@@ -270,12 +323,16 @@ async function autoCheckin() {
         console.log('[CaptchaSolver] 收到求解请求: id=' + id + ' pieceSize=' + pieceSize + ' y=' + gapY);
 
         // 优先用模板匹配（piece 与 bg 比对），更可靠；无 piece 时回退边缘检测
-        var gapX = null;
-        if (captchaData.pieceBase64) {
-          gapX = await findGapByTemplateMatch(captchaData.bgBase64, captchaData.pieceBase64, pieceSize, gapY, captchaData.width);
-        }
+        // 优先用亮度法：在该 captcha 上最准（缺口是 bg 上的亮色矩形补丁，找最亮连续区左边缘）
+        var gapX = await findGapByBrightness(captchaData.bgBase64, pieceSize, gapY, captchaData.width);
         if (gapX === null || gapX === undefined) {
-          gapX = await findGapFromBase64(captchaData.bgBase64, pieceSize, gapY);
+          // 回退：模板匹配（piece 与 bg 比对）
+          if (captchaData.pieceBase64) {
+            gapX = await findGapByTemplateMatch(captchaData.bgBase64, captchaData.pieceBase64, pieceSize, gapY, captchaData.width);
+          }
+          if (gapX === null || gapX === undefined) {
+            gapX = await findGapFromBase64(captchaData.bgBase64, pieceSize, gapY);
+          }
         }
         console.log('[CaptchaSolver] 计算得到 gapX=' + gapX);
 
