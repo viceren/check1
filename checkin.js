@@ -14,6 +14,18 @@ const CHECKIN_URL = 'https://gpt.qt.cool/checkin';
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || 'artifacts';
 const MAX_CAPTCHA_RETRIES = 3;
 
+// ===== 日志同时落盘 checkin.log（便于 GitHub Actions 产物排查）=====
+const LOG_FILE = process.env.LOG_FILE || 'checkin.log';
+try { fs.mkdirSync(path.dirname(LOG_FILE) || '.', { recursive: true }); } catch (e) {}
+const _logStream = fs.createWriteStream(LOG_FILE, { flags: 'w' });
+const _origLog = console.log.bind(console);
+const _origErr = console.error.bind(console);
+function _fmt(args) {
+  return args.map(function (a) { return typeof a === 'string' ? a : (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ');
+}
+console.log = function () { var m = _fmt(arguments); try { _logStream.write(m + '\n'); } catch (e) {} _origLog(m); };
+console.error = function () { var m = _fmt(arguments); try { _logStream.write(m + '\n'); } catch (e) {} _origErr(m); };
+
 async function saveScreenshot(page, name) {
   try {
     await page.screenshot({ path: path.join(SCREENSHOT_DIR, name), fullPage: true });
@@ -21,7 +33,61 @@ async function saveScreenshot(page, name) {
   } catch (e) {}
 }
 
-// ===== Node.js 端 gap 检测（接收 base64 图片数据）=====
+// ===== 模板匹配求解缺口（piece 与 bg 比对，最吻合处即真实缺口）=====
+// 验证码的 piece 是从 bg 某处裁下的拼图块，把它在 bg 上滑动，
+// 累加不透明像素与 bg 的差异，差异最小的位置就是缺口左边缘 = sliderX。
+async function findGapByTemplateMatch(bgBase64, pieceBase64, pieceSize, y, width) {
+  var bgBuf = Buffer.from(bgBase64, 'base64');
+  var pcBuf = Buffer.from(pieceBase64, 'base64');
+
+  var bgMeta = await sharp(bgBuf).metadata();
+  var bgW = bgMeta.width, bgH = bgMeta.height;
+  var bgRGBA = await sharp(bgBuf).ensureAlpha().raw().toBuffer();
+
+  var pcMeta = await sharp(pcBuf).metadata();
+  var pcW = pcMeta.width, pcH = pcMeta.height;
+  var pcRGBA = await sharp(pcBuf).ensureAlpha().raw().toBuffer();
+
+  var ps = pieceSize || pcW;
+  var maxX = Math.max(0, (width || bgW) - ps);
+  var best = { x: Math.round((width || bgW) * 0.3), score: Infinity };
+  var allScores = [];
+
+  for (var x = 0; x <= maxX; x++) {
+    var diff = 0, opaque = 0;
+    for (var py = 0; py < pcH; py++) {
+      var by = (y || 0) + py;
+      if (by < 0 || by >= bgH) continue;
+      for (var px = 0; px < pcW; px++) {
+        var pIdx = (py * pcW + px) * 4;
+        if (pcRGBA[pIdx + 3] < 20) continue; // 透明像素跳过
+        var bx = x + px;
+        if (bx < 0 || bx >= bgW) continue;
+        var bIdx = (by * bgW + bx) * 4;
+        diff += Math.abs(pcRGBA[pIdx] - bgRGBA[bIdx])
+              + Math.abs(pcRGBA[pIdx + 1] - bgRGBA[bIdx + 1])
+              + Math.abs(pcRGBA[pIdx + 2] - bgRGBA[bIdx + 2]);
+        opaque++;
+      }
+    }
+    var score = opaque > 0 ? diff / opaque : Infinity;
+    allScores.push(score);
+    if (score < best.score) best = { x: x, score: score };
+  }
+
+  // 置信度检查：最优分数应明显低于中位数，否则说明 bg 不含缺口信息，改用边缘检测兜底
+  allScores.sort(function (a, b) { return a - b; });
+  var median = allScores[Math.floor(allScores.length / 2)] || 1;
+  var ratio = best.score / median;
+  console.log('[GapSolver] 模板匹配最优 x=' + best.x + ' score=' + best.score.toFixed(1) + ' median=' + median.toFixed(1) + ' ratio=' + ratio.toFixed(2));
+  if (ratio > 0.92) {
+    console.log('[GapSolver] ⚠ 模板匹配置信度低（bg 可能不含缺口），回退边缘检测');
+    return null;
+  }
+  return best.x;
+}
+
+// ===== Node.js 端 gap 检测（边缘检测兜底，仅在无 piece 时使用）=====
 async function findGapFromBase64(bgBase64, pieceSize, gapY) {
   var imgBuffer = Buffer.from(bgBase64, 'base64');
   console.log('[GapSolver] 图片大小: ' + imgBuffer.length + ' bytes');
@@ -168,9 +234,9 @@ async function autoCheckin() {
         '--disable-gpu',
         '--disable-software-rasterizer',
         '--no-first-run',
-        '--no-zygote',
-        '--single-process',
         '--disable-extensions'
+        // 注意：不再使用 --single-process / --no-zygote，
+        // 这两个参数在较新 Chromium 上极易导致渲染进程崩溃（GitHub Action 中尤为常见）
       ]
     });
 
@@ -190,8 +256,6 @@ async function autoCheckin() {
     });
 
     // ===== 核心：暴露 Node.js 函数给浏览器 =====
-    // 浏览器端调用 window.__solveCaptcha(captchaData) 时，
-    // 实际执行 Node.js 端的函数（图片处理、gap 计算、轨迹生成）
     await page.exposeFunction('__solveCaptcha', async function(captchaData) {
       try {
         if (!captchaData || !captchaData.bgBase64) {
@@ -205,7 +269,14 @@ async function autoCheckin() {
 
         console.log('[CaptchaSolver] 收到求解请求: id=' + id + ' pieceSize=' + pieceSize + ' y=' + gapY);
 
-        var gapX = await findGapFromBase64(captchaData.bgBase64, pieceSize, gapY);
+        // 优先用模板匹配（piece 与 bg 比对），更可靠；无 piece 时回退边缘检测
+        var gapX = null;
+        if (captchaData.pieceBase64) {
+          gapX = await findGapByTemplateMatch(captchaData.bgBase64, captchaData.pieceBase64, pieceSize, gapY, captchaData.width);
+        }
+        if (gapX === null || gapX === undefined) {
+          gapX = await findGapFromBase64(captchaData.bgBase64, pieceSize, gapY);
+        }
         console.log('[CaptchaSolver] 计算得到 gapX=' + gapX);
 
         var track = generateSliderTrack(gapX, gapY);
@@ -224,12 +295,12 @@ async function autoCheckin() {
     });
 
     console.log('访问: ' + CHECKIN_URL);
-    await page.goto(CHECKIN_URL, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(CHECKIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForSelector('#renewKey', { state: 'attached', timeout: 20000 });
     await page.waitForTimeout(2000);
     await saveScreenshot(page, '01_initial.png');
 
     // ===== 覆盖 runSliderCaptcha =====
-    // 浏览器内：fetch 验证码数据 + fetch 背景图转 base64 → 调用 Node.js 暴露的 __solveCaptcha
     await page.evaluate(function() {
       window._originalRunSliderCaptcha = window.runSliderCaptcha;
       window.runSliderCaptcha = async function(opts) {
@@ -251,29 +322,20 @@ async function autoCheckin() {
           }
           var data = d.data;
 
-          // 2) 获取背景图 base64 数据
-          //    服务器可能返回 data: URI（内联 base64）或 URL 路径
+          // 2) 获取背景图 + 拼图块 base64 数据
           var bgValue = data.bg;
           var base64 = null;
-
           if (bgValue && bgValue.startsWith('data:')) {
-            // 直接从 data URI 中提取 base64 部分
             var commaIdx = bgValue.indexOf(',');
-            if (commaIdx !== -1) {
-              base64 = bgValue.substring(commaIdx + 1) || null;
-            }
+            if (commaIdx !== -1) base64 = bgValue.substring(commaIdx + 1) || null;
             console.log('[CaptchaSolver] bg 是 data URI, base64长度=' + (base64 ? base64.length : 0));
           } else {
-            // 旧模式：bg 是 URL 路径，需要 fetch 下载
             var bgUrl = bgValue || '';
             if (!bgUrl.startsWith('http')) {
               bgUrl = window.location.origin + (bgUrl.startsWith('/') ? '' : '/') + bgUrl;
             }
             var imgR = await fetch(bgUrl, { cache: 'no-store' });
-            if (!imgR.ok) {
-              console.log('[CaptchaSolver] 背景图下载失败: ' + imgR.status);
-              return null;
-            }
+            if (!imgR.ok) { console.log('[CaptchaSolver] 背景图下载失败: ' + imgR.status); return null; }
             var blob = await imgR.blob();
             base64 = await new Promise(function(resolve) {
               var reader = new FileReader();
@@ -282,6 +344,13 @@ async function autoCheckin() {
               reader.readAsDataURL(blob);
             });
             console.log('[CaptchaSolver] 背景图 fetch 成功, base64长度=' + (base64 ? base64.length : 0));
+          }
+
+          // 拼图块（模板匹配需要）
+          var pieceBase64 = null;
+          if (data.piece && data.piece.startsWith('data:')) {
+            var pIdx = data.piece.indexOf(',');
+            if (pIdx !== -1) pieceBase64 = data.piece.substring(pIdx + 1) || null;
           }
 
           if (!base64) {
@@ -293,6 +362,7 @@ async function autoCheckin() {
           var result = await window.__solveCaptcha({
             id: data.id,
             bgBase64: base64,
+            pieceBase64: pieceBase64,
             width: data.width,
             pieceSize: data.pieceSize || 52,
             y: data.y || 0
@@ -306,7 +376,7 @@ async function autoCheckin() {
         }
       };
     });
-    console.log('🔧 滑块求解器已注入（exposeFunction 模式）');
+    console.log('🔧 滑块求解器已注入（模板匹配模式）');
 
     // 登录
     console.log('🔐 登录中...');
@@ -425,6 +495,7 @@ async function autoCheckin() {
       await browser.close();
       console.log('浏览器已关闭');
     }
+    try { _logStream.end(); } catch (e) {}
   }
 }
 
