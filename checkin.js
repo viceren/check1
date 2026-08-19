@@ -12,7 +12,7 @@ if (!CHECKIN_KEY) {
 
 const CHECKIN_URL = 'https://gpt.qt.cool/checkin';
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || 'artifacts';
-const MAX_CAPTCHA_RETRIES = 3;
+const MAX_CAPTCHA_RETRIES = 5;
 
 // ===== 日志同时落盘 checkin.log（便于 GitHub Actions 产物排查）=====
 const LOG_FILE = process.env.LOG_FILE || 'checkin.log';
@@ -270,6 +270,31 @@ function generateSliderTrack(gapX, baseY) {
   return points.join(';');
 }
 
+// ===== 判断错误是否可重试：验证码失败、网络错误、429限流等均视为可重试 =====
+function classifyError(resultText) {
+  var t = resultText || '';
+  // 验证码类错误
+  var captchaErr = t.indexOf('人机验证') !== -1 || t.indexOf('human') !== -1 ||
+                   t.indexOf('请完成') !== -1 || t.indexOf('Complete') !== -1 ||
+                   t.indexOf('验证') !== -1 || t.indexOf('verif') !== -1;
+  // 网络类错误：网络错误、超时、429限流、请求频繁等
+  var netErr = t.indexOf('网络错误') !== -1 || t.indexOf('网络') !== -1 ||
+               t.indexOf('network') !== -1 || t.toLowerCase().indexOf('timeout') !== -1 ||
+               t.indexOf('超时') !== -1 ||
+               t.indexOf('429') !== -1 || t.indexOf('Too Many Requests') !== -1 ||
+               t.indexOf('请求频繁') !== -1 || t.indexOf('频繁') !== -1;
+  return { retryable: captchaErr || netErr, type: netErr ? 'network' : 'captcha' };
+}
+
+// ===== 指数退避延迟：base * 2^(attempt-1) + 随机抖动，封顶 maxMs =====
+function backoffDelay(attempt, baseMs, maxMs) {
+  baseMs = baseMs || 2000;
+  maxMs = maxMs || 30000;
+  var delay = baseMs * Math.pow(2, attempt - 1);
+  delay += Math.floor(Math.random() * 1000); // 抖动，避免固定节奏触发风控
+  return Math.min(delay, maxMs);
+}
+
 // ===== 主签到逻辑 =====
 async function autoCheckin() {
   let browser = null;
@@ -519,15 +544,14 @@ async function autoCheckin() {
         break;
       }
 
-      var needRetry = resultText.indexOf('人机验证') !== -1 || resultText.indexOf('human') !== -1 ||
-                      resultText.indexOf('请完成') !== -1 || resultText.indexOf('Complete') !== -1 ||
-                      resultText.indexOf('验证') !== -1 || resultText.indexOf('verif') !== -1;
+      var errInfo = classifyError(resultText);
 
-      if (needRetry && attempt < MAX_CAPTCHA_RETRIES) {
-        console.log('❌ 验证码失败，将重试...');
-        await page.waitForTimeout(1000);
-      } else if (needRetry) {
-        console.log('❌ 验证码求解失败，已达最大重试次数');
+      if (errInfo.retryable && attempt < MAX_CAPTCHA_RETRIES) {
+        var delay = backoffDelay(attempt, 2000, 30000);
+        console.log('❌ ' + (errInfo.type === 'network' ? '网络错误/限流' : '验证码失败') + '，' + (delay / 1000).toFixed(1) + 's 后重试...');
+        await page.waitForTimeout(delay);
+      } else if (errInfo.retryable) {
+        console.log('❌ ' + (errInfo.type === 'network' ? '网络错误' : '验证码求解失败') + '，已达最大重试次数');
       } else {
         console.log('❌ 其他错误，停止重试');
         break;
