@@ -13,6 +13,8 @@ if (!CHECKIN_KEY) {
 const CHECKIN_URL = 'https://gpt.qt.cool/checkin';
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || 'artifacts';
 const MAX_CAPTCHA_RETRIES = 5;
+// 登录接口偶发“网络错误”，一次失败即硬退出会导致当天漏签，故登录也带重试
+const MAX_LOGIN_RETRIES = 5;
 
 // ===== 日志同时落盘 checkin.log（便于 GitHub Actions 产物排查）=====
 const LOG_FILE = process.env.LOG_FILE || 'checkin.log';
@@ -460,23 +462,38 @@ async function autoCheckin() {
     });
     console.log('🔧 滑块求解器已注入（模板匹配模式）');
 
-    // 登录
+    // 登录（带重试：网络错误/超时/验证码类错误按指数退避重试，避免偶发抖动导致整天漏签）
     console.log('🔐 登录中...');
-    await page.locator('#renewKey').fill(CHECKIN_KEY);
-    await page.waitForTimeout(500);
-    await saveScreenshot(page, '02_after_input.png');
+    var loginOk = false;
+    for (var loginAttempt = 1; loginAttempt <= MAX_LOGIN_RETRIES; loginAttempt++) {
+      await page.locator('#renewKey').fill(CHECKIN_KEY);
+      await page.waitForTimeout(500);
+      await saveScreenshot(page, '02_after_input.png');
 
-    await page.locator('#renewLogin button.ci-btn.renew').click({ timeout: 5000 });
+      await page.locator('#renewLogin button.ci-btn.renew').click({ timeout: 5000 });
 
-    try {
-      await page.locator('#renewCheckin').waitFor({ state: 'visible', timeout: 20000 });
-      console.log('✅ 登录成功');
-    } catch (e) {
-      var loginError = await page.locator('#renewResult').textContent().catch(function() { return ''; });
-      console.error('登录超时或失败: ' + loginError);
-      await saveScreenshot(page, '03_login_failed.png');
-      return false;
+      try {
+        await page.locator('#renewCheckin').waitFor({ state: 'visible', timeout: 20000 });
+        console.log('✅ 登录成功');
+        loginOk = true;
+        break;
+      } catch (e) {
+        var loginError = await page.locator('#renewResult').textContent().catch(function() { return ''; });
+        console.error('登录超时或失败 (尝试 ' + loginAttempt + '/' + MAX_LOGIN_RETRIES + '): ' + loginError);
+        await saveScreenshot(page, '03_login_failed_' + loginAttempt + '.png');
+        // 网络错误/超时/验证码类错误可重试；接口挂起无任何提示也按可重试处理；密钥无效等硬错误直接放弃
+        var loginErrInfo = classifyError(loginError);
+        var loginRetryable = loginErrInfo.retryable || !(loginError || '').trim();
+        if (!loginRetryable || loginAttempt >= MAX_LOGIN_RETRIES) {
+          console.error('❌ 登录失败，签到中止');
+          break;
+        }
+        var loginDelay = backoffDelay(loginAttempt, 3000, 30000);
+        console.log('❌ ' + (loginErrInfo.retryable ? (loginErrInfo.type === 'network' ? '网络错误/限流' : '验证码类错误') : '接口无响应') + '，' + (loginDelay / 1000).toFixed(1) + 's 后重试登录...');
+        await page.waitForTimeout(loginDelay);
+      }
     }
+    if (!loginOk) return false;
 
     await page.waitForTimeout(2000);
     await saveScreenshot(page, '03_after_login.png');
