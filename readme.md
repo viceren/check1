@@ -53,18 +53,18 @@
 
 ### 定时执行时间
 
-默认情况下，脚本会在每天 **UTC 23:31**（即北京时间次日早上 07:31）执行。如果你想修改执行时间，可以编辑 `.github/workflows/checkin.yml` 文件中的 `cron` 表达式：
+工作流按 **北京时间（Asia/Shanghai）** 触发，每天 **三档冗余** 互为兜底：
 
 ```yaml
 schedule:
-  - cron: '31 23 * * *'  # 每天UTC时间23:31执行（北京时间次日07:31）
+  - cron: '31 6 * * *'   # 北京时间 06:31
+  - cron: '31 13 * * *'  # 北京时间 13:31
+  - cron: '31 20 * * *'  # 北京时间 20:31
 ```
 
-cron表达式的格式为：`分 时 日 月 周`（均为 UTC 时间）。北京时间 = UTC + 8 小时。例如：
+> GitHub Actions 的 `schedule` **不保证准时**：高负载时可能延迟，极端情况下整次运行会被丢弃。三档分布在早/中/晚，只要任意一档成功即完成签到；脚本在检测到「今日已签到」时会直接退出（退出码 0），因此多次触发不会重复签到、无副作用。
 
-- `31 23 * * *`: 每天UTC 23:31（北京时间次日 07:31）
-- `0 0 * * *`: 每天UTC 0 点（北京时间早上 8 点）
-- `0 16 * * *`: 每天UTC 16 点（北京时间次日凌晨 0 点）
+cron 表达式格式为 `分 时 日 月 周`，配合 `timezone` 字段后「时」即按北京时间为准（GitHub 已原生支持 `timezone`，无需手工做 UTC 换算）。
 
 ### 环境变量
 
@@ -75,8 +75,6 @@ cron表达式的格式为：`分 时 日 月 周`（均为 UTC 时间）。北�
 | `CHECKIN_KEY` | 是 | 签到网站所需的密钥。CI 由 Secret 提供；本地写入 `.env`。 |
 | `CHECKIN_EMAIL` | 否 | 若账号绑定了邮箱且该站点签到需先完成邮箱绑定，则填写。 |
 | `CHECKIN_EMAIL_CODE` | 否 | 与 `CHECKIN_EMAIL` 配套，邮箱收到的验证码。 |
-| `LOG_LEVEL` | 否 | 日志级别，可选：error/warn/info/verbose/debug/silly（默认 info）。 |
-| `FORCE_RUN` | 否 | 设为 `true` 时忽略「今日已签到」强制执行（CI 手动触发可勾选）。 |
 | `SCREENSHOT_DIR` | 否 | 截图存放目录，默认 `artifacts`。 |
 | `LOG_FILE` | 否 | 日志文件路径，默认 `checkin.log`。 |
 
@@ -120,7 +118,7 @@ npm run checkin
 
 - **`playwright` 报错找不到浏览器**：执行 `npx playwright install chromium`。CI 已通过 `npx playwright install --with-deps chromium` 自动安装。
 - **Linux 下启动崩溃 / 缺少共享库**：需要 `npx playwright install-deps chromium`（需 sudo 权限）。
-- **滑块验证一直失败**：看 `checkin.log` 里 `[GapSolver] 模板匹配最优 x=... ratio=...`，若 `ratio` 接近 1 说明已回退边缘检测兜底，可能站点改版导致 `piece` 字段缺失，需重新核对接口。
+- **滑块验证一直失败**：看 `checkin.log` 里 `[GapSolver] 亮度法 peakX=... leftEdge=...`，`leftEdge` 即送给服务端的 `sliderX`；若日志出现「置信度低/回退」字样，说明缺口信号弱，需重新核对接口。
 - **`CHECKIN_KEY` 错误**：日志会显示登录超时或失败，检查 `.env` 或 Secrets 中的密钥是否过期。
 
 ## 注意事项
@@ -133,7 +131,7 @@ npm run checkin
 
 ### 脚本执行失败
 
-1. 在仓库 `Actions` 页面进入对应运行，下载 **`checkin-results-<run号>`** 产物（包含 `checkin.log` 与 `artifacts/*.png`），这是最完整的排错依据。
+1. 在仓库 `Actions` 页面进入对应运行下载产物排查：成功运行只有 **`checkin-log-<run号>`**（含 `checkin.log`）；失败运行额外生成 **`checkin-screenshots-<run号>`**（含 `artifacts/*.png` 步骤截图）。
 2. 检查 GitHub Actions 的运行日志（"Show result" 步骤会 `tail -20 checkin.log`）。
 3. 确保你已经正确配置了 `CHECKIN_KEY` Secret（或本地 `.env`）。
 4. 检查网站是否可以正常访问，以及页面结构（`#renewKey`、`#checkinBtn` 等选择器）是否发生了变化。
@@ -143,7 +141,7 @@ npm run checkin
 1. 看产物里的 `checkin.log`，定位 `[GapSolver]` / `[CaptchaSolver]` 行，确认 `sliderX` 与 ratio。
 2. 对比 `artifacts/` 下的步骤截图，确认滑块是否被正确识别、拖拽是否到位。
 3. 网站可能更新了验证码机制（如 `piece` 字段缺失、缺口算法变更），需要更新脚本中的验证码处理逻辑。
-4. 脚本已内置 3 次重试（`MAX_CAPTCHA_RETRIES`），可在 `checkin.js` 中调大重试次数。
+4. 脚本已内置 5 次验证码重试（`MAX_CAPTCHA_RETRIES`），登录另有 5 次重试（`MAX_LOGIN_RETRIES`），均带指数退避，可在 `checkin.js` 中调大。
 
 ## 自定义和扩展
 

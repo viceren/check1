@@ -1,7 +1,12 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-const CHECKIN_KEY = process.env.CHECKIN_KEY || 'REDACTED_CHECKIN_KEY';
+const CHECKIN_KEY = process.env.CHECKIN_KEY;
+if (!CHECKIN_KEY) {
+  console.error('未设置 CHECKIN_KEY 环境变量。请勿将真实密钥硬编码进代码（会泄露到公开仓库的 git 历史）。');
+  console.error('运行前请：cp .env.example .env 并填入 CHECKIN_KEY，或 export CHECKIN_KEY=...');
+  process.exit(1);
+}
 const CHECKIN_URL = 'https://gpt.qt.cool/checkin';
 
 async function diagnose() {

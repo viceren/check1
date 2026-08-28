@@ -2,26 +2,16 @@ name: Auto Checkin
 
 on:
   schedule:
-    - cron: '31 22 * * *'  # 每天UTC时间0点执行（北京时间早上8点30分）
-  workflow_dispatch:  # 允许手动触发
-    inputs:
-      log_level:
-        description: '日志级别'
-        required: false
-        default: 'info'
-        type: choice
-        options:
-          - error
-          - warn
-          - info
-          - verbose
-          - debug
-          - silly
-      force_run:
-        description: '强制执行（忽略今日已签到）'
-        required: false
-        default: 'false'
-        type: boolean
+    # 北京时间三档冗余：06:31 / 13:31 / 20:31，互为兜底。
+    # 单档 scheduled workflow 在高负载时可能被延迟甚至整次丢弃，多档能显著降低断签风险。
+    # 脚本在「今日已签到」时会早退且退出码 0，因此多次触发不会重复签到、无副作用。
+    - cron: '31 6 * * *'
+      timezone: 'Asia/Shanghai'
+    - cron: '31 13 * * *'
+      timezone: 'Asia/Shanghai'
+    - cron: '31 20 * * *'
+      timezone: 'Asia/Shanghai'
+  workflow_dispatch:  # 允许手动一键触发
 
 jobs:
   checkin:
@@ -36,8 +26,16 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Get dependencies
-        run: npm install
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -48,17 +46,22 @@ jobs:
       - name: Run checkin script
         env:
           CHECKIN_KEY: ${{ secrets.CHECKIN_KEY }}
-          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
-          FORCE_RUN: ${{ inputs.force_run || 'false' }}
         run: npm run checkin
 
-      - name: Upload checkin artifacts
+      - name: Upload checkin log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: checkin-results-${{ github.run_number }}
+          name: checkin-log-${{ github.run_number }}
+          path: checkin.log
+          retention-days: 7
+
+      - name: Upload screenshots (on failure only)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkin-screenshots-${{ github.run_number }}
           path: |
-            checkin.log
             artifacts/*.png
             artifacts/**/*.png
           retention-days: 7
