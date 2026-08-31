@@ -64,6 +64,8 @@ jobs:
           path: |
             artifacts/*.png
             artifacts/**/*.png
+            artifacts/*.html
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Show result
