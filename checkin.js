@@ -378,9 +378,32 @@ async function autoCheckin() {
       }
     });
 
-    console.log('访问: ' + CHECKIN_URL);
-    await page.goto(CHECKIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForSelector('#renewKey', { state: 'attached', timeout: 20000 });
+    // ===== 访问页面（带重试）：站点偶发返回异常页/渲染慢会导致 #renewKey 一直不出现，
+    // 一次失败即硬退出会漏签，这里换页重试并留存现场（截图+HTML）=====
+    const MAX_PAGELOAD_RETRIES = 3;
+    for (var plAttempt = 1; plAttempt <= MAX_PAGELOAD_RETRIES; plAttempt++) {
+      try {
+        console.log('访问: ' + CHECKIN_URL + ' (尝试 ' + plAttempt + '/' + MAX_PAGELOAD_RETRIES + ')');
+        await page.goto(CHECKIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // 先截图再等待选择器：即使等待失败，也能留下页面当时的真实样子
+        await saveScreenshot(page, '01_initial_attempt' + plAttempt + '.png');
+        await page.waitForSelector('#renewKey', { state: 'attached', timeout: 20000 });
+        break;
+      } catch (e) {
+        var pageInfo = '';
+        try {
+          pageInfo = ' url=' + page.url() + ' title=' + JSON.stringify(await page.title());
+          var bodyText = await page.locator('body').innerText().catch(function() { return ''; });
+          if (bodyText) pageInfo += ' body=' + JSON.stringify(bodyText.trim().slice(0, 200));
+        } catch (e2) {}
+        console.error('页面加载或查找输入框失败 (尝试 ' + plAttempt + '/' + MAX_PAGELOAD_RETRIES + '):' + e.message + pageInfo);
+        await saveScreenshot(page, '00_pageload_failed_' + plAttempt + '.png');
+        // 保存 HTML 便于离线排查（Cloudflare 拦截页/维护页/报错页一眼可辨）
+        try { fs.writeFileSync(path.join(SCREENSHOT_DIR, '00_pageload_failed_' + plAttempt + '.html'), await page.content()); } catch (e3) {}
+        if (plAttempt >= MAX_PAGELOAD_RETRIES) throw e;
+        await page.waitForTimeout(backoffDelay(plAttempt, 3000, 15000));
+      }
+    }
     await page.waitForTimeout(2000);
     await saveScreenshot(page, '01_initial.png');
 
